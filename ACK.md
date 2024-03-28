@@ -5,8 +5,8 @@ some of the resources on the Gerrit/Git-on-Borg workflow.
 
 go/gob/users/intro-codelab go/gerrit-explained go/gob-gerrit-workflow
 
-Create a CR (on the `ack` branch) that removes your name from the list below to
-confirm that you're on board with the switch to Git-on-Borg.
+Create a CR (on the `ack` branch) that adds `ack` after your name from the list
+below to confirm that you're on board with the switch to Git-on-Borg.
 
 Pending Acknowledgement:
 
@@ -19,4 +19,4 @@ Pending Acknowledgement:
 - julsh@
 - katsiaryna@
 - tbinder@
-- tzn@
+- tzn@ - ack
