@@ -11,7 +11,7 @@ confirm that you're on board with the switch to Git-on-Borg.
 Pending Acknowledgement:
 
 - andrisaar@
-- dingelish@
+- dingelish@ - ack
 - ernoc@
 - grobloer@
 - ivanpetrov@
