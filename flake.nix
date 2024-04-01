@@ -54,6 +54,30 @@
               patch = ./oak_containers_kernel/patches/virtio-dma.patch;
             }];
           };
+          cloud_hypervisor_src = builtins.fetchurl {
+            url = "https://github.com/cloud-hypervisor/cloud-hypervisor/archive/refs/tags/v38.0.tar.gz";
+            sha256 = "0rz9vmch6izbv4hxvsx8prgn4llkvwzl6q2bs7xgcrpvzhlv8zlx";
+          };
+          oak_on_prem_cloud_hypervisor = pkgs.stdenv.mkDerivation {
+            name = "oak_on_prem_cloud_hypervisor";
+            src = "./oak_on_prem_cloud_hypervisor";
+            buildInputs = with pkgs; [
+              bison
+              flex
+              glibc
+              qemu-utils
+              libuuid
+            ];
+            baseInputs = [
+              cloud_hypervisor_src
+            ];
+            buildPhase = ''
+              make
+              cp target/cloud-hypervisor $out
+            '';
+            installPhase = ''
+              '';
+          };
           androidSdk =
             (pkgs.androidenv.composeAndroidPackages {
               platformVersions = [ "30" ];
@@ -205,6 +229,21 @@
                 umoci
               ];
             };
+            # Oak on-prem builds disk image for the guest VM
+            oak_on_prem = with pkgs; mkShell {
+              shellHook = ''
+	        export CLOUD_HYPERVISOR_SRC_TAR="${cloud_hypervisor_src}"
+              '';
+              inputsFrom = [
+	        containers
+                oak_on_prem_cloud_hypervisor
+              ];
+              packages = [
+                cargo-xbuild
+                guestfs-tools
+                nasm
+              ];
+            };
             # Shell for container kernel image provenance workflow.
             bzImageProvenance = with pkgs; mkShell {
               shellHook = ''
@@ -249,6 +288,7 @@
                 rust
                 bazelShell
                 lint
+                oak_on_prem
               ];
             };
           };
