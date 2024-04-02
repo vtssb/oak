@@ -10,7 +10,7 @@ below to confirm that you're on board with the switch to Git-on-Borg.
 
 Pending Acknowledgement:
 
-- andrisaar@
+- andrisaar@ - ack
 - dingelish@ - ack
 - ernoc@
 - grobloer@
