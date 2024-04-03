@@ -13,10 +13,10 @@ Pending Acknowledgement:
 - andrisaar@ - ack
 - dingelish@ - ack
 - ernoc@
-- grobloer@
+- grobler@
 - ivanpetrov@
 - jibbl@
 - julsh@ - ack
 - katsiaryna@
-- tbinder@
+- tbinder@ - ack
 - tzn@ - ack
