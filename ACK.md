@@ -12,7 +12,7 @@ Pending Acknowledgement:
 
 - andrisaar@ - ack
 - dingelish@ - ack
-- ernoc@
+- ernoc@ - ack
 - grobler@
 - ivanpetrov@
 - jibbl@
