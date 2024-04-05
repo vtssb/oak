@@ -17,6 +17,6 @@ Pending Acknowledgement:
 - ivanpetrov@
 - jibbl@
 - julsh@ - ack
-- katsiaryna@
+- katsiaryna@ - ack
 - tbinder@ - ack
 - tzn@ - ack
