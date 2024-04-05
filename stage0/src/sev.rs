@@ -19,6 +19,7 @@ use core::{
     alloc::{AllocError, Allocator, Layout},
     ops::{Deref, DerefMut},
     ptr::NonNull,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use oak_core::sync::OnceCell;
@@ -38,8 +39,9 @@ use spinning_top::Spinlock;
 use x86_64::{
     instructions::tlb,
     structures::paging::{
-        frame::PhysFrameRange, page::AddressNotAligned, Page, PageSize, PageTable, PageTableFlags,
-        PhysFrame, Size1GiB, Size2MiB, Size4KiB,
+        frame::PhysFrameRange,
+        page::{AddressNotAligned, NotGiantPageSize},
+        Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
@@ -230,7 +232,7 @@ pub fn unshare_page(page: Page<Size4KiB>) {
     }
     tlb::flush_all();
     // We have to revalidate the page again after un-sharing it.
-    if let Err(err) = page.pvalidate() {
+    if let Err(err) = page.pvalidate(&counters::VALIDATED_4K) {
         if err != InstructionError::ValidationStatusNotUpdated {
             panic!("shared page revalidation failed");
         }
@@ -256,12 +258,14 @@ impl ValidatablePageSize for Size2MiB {
 }
 
 trait Validate<S: PageSize> {
-    fn pvalidate(&self) -> Result<(), InstructionError>;
+    fn pvalidate(&self, counter: &AtomicUsize) -> Result<(), InstructionError>;
 }
 
 impl<S: PageSize + ValidatablePageSize> Validate<S> for Page<S> {
-    fn pvalidate(&self) -> Result<(), InstructionError> {
-        pvalidate(self.start_address().as_u64() as usize, S::SEV_PAGE_SIZE, Validation::Validated)
+    fn pvalidate(&self, counter: &AtomicUsize) -> Result<(), InstructionError> {
+        pvalidate(self.start_address().as_u64() as usize, S::SEV_PAGE_SIZE, Validation::Validated)?;
+        counter.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -280,11 +284,12 @@ impl<S: PageSize> MappedPage<S> {
     }
 }
 
-fn pvalidate_range<S: PageSize + ValidatablePageSize, T: PageSize, F>(
+fn pvalidate_range<S: NotGiantPageSize + ValidatablePageSize, T: PageSize, F>(
     range: &PhysFrameRange<S>,
     memory: &mut MappedPage<T>,
     encrypted: u64,
     flags: PageTableFlags,
+    success_counter: &AtomicUsize,
     mut f: F,
 ) -> Result<(), InstructionError>
 where
@@ -324,7 +329,7 @@ where
             .iter()
             .zip(pages)
             .filter(|(entry, _)| !entry.is_unused())
-            .map(|(entry, page)| (entry, page.pvalidate()))
+            .map(|(entry, page)| (entry, page.pvalidate(success_counter)))
             .map(|(entry, result)| result.or_else(|err| f(entry.addr(), err)))
             .find(|result| result.is_err())
         {
@@ -336,6 +341,23 @@ where
     }
 
     Ok(())
+}
+
+pub mod counters {
+    use core::sync::atomic::AtomicUsize;
+
+    /// Number of PVALIDATE invocations that did not change Validated state.
+    pub static ERROR_VALIDATION_STATUS_NOT_UPDATED: AtomicUsize = AtomicUsize::new(0);
+
+    /// Number of FAIL_SIZEMISMATCH errors when invoking PVALIDATE on 2 MiB
+    /// pages.
+    pub static ERROR_FAIL_SIZE_MISMATCH: AtomicUsize = AtomicUsize::new(0);
+
+    /// Number of successful PVALIDATE invocations on 2 MiB pages.
+    pub static VALIDATED_2M: AtomicUsize = AtomicUsize::new(0);
+
+    /// Number of successful PVALIDATE invocations on 4 KiB pages.
+    pub static VALIDATED_4K: AtomicUsize = AtomicUsize::new(0);
 }
 
 trait Validatable4KiB {
@@ -357,15 +379,23 @@ impl Validatable4KiB for PhysFrameRange<Size4KiB> {
         pt: &mut MappedPage<Size2MiB>,
         encrypted: u64,
     ) -> Result<(), InstructionError> {
-        pvalidate_range(self, pt, encrypted, PageTableFlags::empty(), |_addr, err| match err {
-            InstructionError::ValidationStatusNotUpdated => {
-                // We don't treat this as an error. It only happens if SEV-SNP is not enabled,
-                // or it is already validated. See the PVALIDATE instruction in
-                // <https://www.amd.com/system/files/TechDocs/24594.pdf> for more details.
-                Ok(())
-            }
-            other => Err(other),
-        })
+        pvalidate_range(
+            self,
+            pt,
+            encrypted,
+            PageTableFlags::empty(),
+            &counters::VALIDATED_4K,
+            |_addr, err| match err {
+                InstructionError::ValidationStatusNotUpdated => {
+                    // We don't treat this as an error. It only happens if SEV-SNP is not enabled,
+                    // or it is already validated. See the PVALIDATE instruction in
+                    // <https://www.amd.com/system/files/TechDocs/24594.pdf> for more details.
+                    counters::ERROR_VALIDATION_STATUS_NOT_UPDATED.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+                other => Err(other),
+            },
+        )
     }
 }
 
@@ -393,26 +423,55 @@ impl Validatable2MiB for PhysFrameRange<Size2MiB> {
         pt: &mut MappedPage<Size2MiB>,
         encrypted: u64,
     ) -> Result<(), InstructionError> {
-        pvalidate_range(self, pd, encrypted, PageTableFlags::HUGE_PAGE, |addr, err| match err {
-            InstructionError::FailSizeMismatch => {
-                // 2MiB is no go, fail back to 4KiB pages.
-                // This will not panic as every address that is 2 MiB-aligned is by definition
-                // also 4 KiB-aligned.
-                let start = PhysFrame::<Size4KiB>::from_start_address(PhysAddr::new(
-                    addr.as_u64() & !encrypted,
-                ))
-                .unwrap();
-                let range = PhysFrame::range(start, start + 512);
-                range.pvalidate(pt, encrypted)
-            }
-            InstructionError::ValidationStatusNotUpdated => {
-                // We don't treat this as an error. It only happens if SEV-SNP is not enabled,
-                // or it is already validated. See the PVALIDATE instruction in
-                // <https://www.amd.com/system/files/TechDocs/24594.pdf> for more details.
-                Ok(())
-            }
-            other => Err(other),
-        })
+        pvalidate_range(
+            self,
+            pd,
+            encrypted,
+            PageTableFlags::HUGE_PAGE,
+            &counters::VALIDATED_2M,
+            |addr, err| match err {
+                InstructionError::FailSizeMismatch => {
+                    // 2MiB is no go, fail back to 4KiB pages.
+                    // This will not panic as every address that is 2 MiB-aligned is by definition
+                    // also 4 KiB-aligned.
+                    counters::ERROR_FAIL_SIZE_MISMATCH.fetch_add(1, Ordering::SeqCst);
+                    let start = PhysFrame::<Size4KiB>::from_start_address(PhysAddr::new(
+                        addr.as_u64() & !encrypted,
+                    ))
+                    .unwrap();
+                    let range = PhysFrame::range(start, start + 512);
+                    range.pvalidate(pt, encrypted)
+                }
+                InstructionError::ValidationStatusNotUpdated => {
+                    // We don't treat this as an error. It only happens if SEV-SNP is not enabled,
+                    // or it is already validated. See the PVALIDATE instruction in
+                    // <https://www.amd.com/system/files/TechDocs/24594.pdf> for more details.
+                    counters::ERROR_VALIDATION_STATUS_NOT_UPDATED.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+                other => Err(other),
+            },
+        )
+    }
+}
+
+trait PageStateChange {
+    fn page_state_change(&self, assignment: PageAssignment) -> Result<(), &'static str>;
+}
+
+impl<S: NotGiantPageSize> PageStateChange for PhysFrameRange<S> {
+    fn page_state_change(&self, assignment: PageAssignment) -> Result<(), &'static str> {
+        // Future optimization: do this operation in batches of 253 frames (that's how
+        // many can fit in one PageStateChange request) instead of one at a time.
+        for frame in *self {
+            GHCB_WRAPPER
+                .get()
+                .expect("GHCB not initialized")
+                .lock()
+                .page_state_change(frame, assignment)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -459,34 +518,82 @@ pub fn validate_memory(e820_table: &[BootE820Entry], encrypted: u64) {
             continue;
         }
 
-        let start_address = PhysAddr::new(entry.addr() as u64);
-        let limit_address = PhysAddr::new((entry.addr() + entry.size()) as u64);
+        let start_address = PhysAddr::new(entry.addr() as u64).align_up(Size4KiB::SIZE);
+        let limit_address =
+            PhysAddr::new((entry.addr() + entry.size()) as u64).align_down(Size4KiB::SIZE);
 
-        // If the memory boundaries align with 2 MiB, start with that.
-        if start_address.is_aligned(Size2MiB::SIZE) && limit_address.is_aligned(Size2MiB::SIZE) {
+        if start_address > limit_address {
+            log::error!(
+                "nonsensical entry in E820 table: [{}, {})",
+                entry.addr(),
+                entry.addr() + entry.size()
+            );
+            continue;
+        }
+
+        // Attempt to validate as many pages as possible using 2 MiB pages (aka
+        // hugepages).
+        let hugepage_start = start_address.align_up(Size2MiB::SIZE);
+        let hugepage_limit = limit_address.align_down(Size2MiB::SIZE);
+
+        // If start_address == hugepage_start, we're aligned with 2M address boundary.
+        // Otherwise, we need to process any 4K pages before the alignment.
+        // Note that limit_address may be less than hugepage_start, which means that the
+        // E820 entry was less than 2M in size and didn't cross a 2M boundary.
+        if hugepage_start > start_address {
+            let limit = core::cmp::min(hugepage_start, limit_address);
+            // We know the addresses are aligned to at least 4K, so the unwraps are safe.
+            let range = PhysFrame::<Size4KiB>::range(
+                PhysFrame::from_start_address(start_address).unwrap(),
+                PhysFrame::from_start_address(limit).unwrap(),
+            );
+            range.page_state_change(PageAssignment::Private).unwrap();
+            range.pvalidate(&mut validation_pt, encrypted).expect("failed to validate memory");
+        }
+
+        // If hugepage_limit > hugepage_start, we've got some contiguous 2M chunks that
+        // we can process as hugepages.
+        if hugepage_limit > hugepage_start {
             // These unwraps can't fail as we've made sure that the addresses are 2
             // MiB-aligned.
             let range = PhysFrame::<Size2MiB>::range(
-                PhysFrame::from_start_address(start_address).unwrap(),
+                PhysFrame::from_start_address(hugepage_start).unwrap(),
+                PhysFrame::from_start_address(hugepage_limit).unwrap(),
+            );
+            range.page_state_change(PageAssignment::Private).unwrap();
+            range
+                .pvalidate(&mut validation_pd, &mut validation_pt, encrypted)
+                .expect("failed to validate memory");
+        }
+
+        // And finally, we may have some trailing 4K pages in [hugepage_limit,
+        // limit_address) that we need to process.
+        if limit_address > hugepage_limit {
+            let start = core::cmp::max(start_address, hugepage_limit);
+            // We know the addresses are aligned to at least 4K, so the unwraps are safe.
+            let range = PhysFrame::<Size4KiB>::range(
+                PhysFrame::from_start_address(start).unwrap(),
                 PhysFrame::from_start_address(limit_address).unwrap(),
             );
-            range.pvalidate(&mut validation_pd, &mut validation_pt, encrypted)
-        } else {
-            // No such luck, fail over to 4K pages.
-            // The unwraps can't fail as we make sure that the addresses are 4 KiB-aligned.
-            let range = PhysFrame::<Size4KiB>::range(
-                PhysFrame::from_start_address(start_address.align_up(Size4KiB::SIZE)).unwrap(),
-                PhysFrame::from_start_address(limit_address.align_down(Size4KiB::SIZE)).unwrap(),
-            );
-            range.pvalidate(&mut validation_pt, encrypted)
+            range.page_state_change(PageAssignment::Private).unwrap();
+            range.pvalidate(&mut validation_pt, encrypted).expect("failed to validate memory");
         }
-        .expect("failed to validate memory");
     }
 
     page_tables.pd_0[1].set_unused();
     page_tables.pdpt[1].set_unused();
     tlb::flush_all();
     log::info!("SEV-SNP memory validation complete.");
+    log::info!("  Validated using 2 MiB pages: {}", counters::VALIDATED_2M.load(Ordering::SeqCst));
+    log::info!("  Validated using 4 KiB pages: {}", counters::VALIDATED_4K.load(Ordering::SeqCst));
+    log::info!(
+        "  Valid state not updated: {}",
+        counters::ERROR_VALIDATION_STATUS_NOT_UPDATED.load(Ordering::SeqCst)
+    );
+    log::info!(
+        "  RMP page size mismatch errors (fallback to 4K): {}",
+        counters::ERROR_FAIL_SIZE_MISMATCH.load(Ordering::SeqCst)
+    );
 }
 
 /// Initializes the Guest Message encryptor using VMPCK0.

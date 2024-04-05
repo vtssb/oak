@@ -33,8 +33,8 @@ use oak_proto_rust::oak::{
     attestation::v1::{
         attestation_results::Status, binary_reference_value, endorsements,
         extracted_evidence::EvidenceValues, kernel_binary_reference_value, reference_values,
-        regex_reference_value, root_layer_data::Report, AmdAttestationReport,
-        AmdSevReferenceValues, ApplicationKeys, ApplicationLayerData, ApplicationLayerEndorsements,
+        root_layer_data::Report, text_reference_value, AmdAttestationReport, AmdSevReferenceValues,
+        ApplicationKeys, ApplicationLayerData, ApplicationLayerEndorsements,
         ApplicationLayerReferenceValues, AttestationResults, BinaryReferenceValue, CbData,
         CbEndorsements, CbReferenceValues, ContainerLayerData, ContainerLayerEndorsements,
         ContainerLayerReferenceValues, Endorsements, Evidence, ExtractedEvidence,
@@ -43,14 +43,15 @@ use oak_proto_rust::oak::{
         KernelLayerEndorsements, KernelLayerReferenceValues, OakContainersData,
         OakContainersEndorsements, OakContainersReferenceValues, OakRestrictedKernelData,
         OakRestrictedKernelEndorsements, OakRestrictedKernelReferenceValues, ReferenceValues,
-        RegexReferenceValue, RootLayerData, RootLayerEndorsements, RootLayerEvidence,
-        RootLayerReferenceValues, SystemLayerData, SystemLayerEndorsements,
-        SystemLayerReferenceValues, TcbVersion, TeePlatform, TransparentReleaseEndorsement,
+        RootLayerData, RootLayerEndorsements, RootLayerEvidence, RootLayerReferenceValues,
+        SystemLayerData, SystemLayerEndorsements, SystemLayerReferenceValues, TcbVersion,
+        TeePlatform, TextReferenceValue, TransparentReleaseEndorsement,
     },
     HexDigest, RawDigest,
 };
 use oak_sev_snp_attestation_report::AttestationReport;
 use prost::Message;
+#[cfg(feature = "regex")]
 use regex::Regex;
 use x509_cert::{
     der::{Decode, DecodePem},
@@ -518,27 +519,29 @@ fn verify_kernel_layer(
     .context("kernel failed verification")?;
 
     if let Some(kernel_raw_cmd_line) = values.kernel_raw_cmd_line.as_ref() {
-        verify_regex(
+        verify_text(
+            now_utc_millis,
             kernel_raw_cmd_line.as_str(),
             reference_values
-                .kernel_cmd_line_regex
+                .kernel_cmd_line_text
                 .as_ref()
-                .context("no kernel command line regex reference values")?,
+                .context("no kernel command line text reference values")?,
+            endorsements.and_then(|value| value.kernel_cmd_line.as_ref()),
         )
         .context("kernel command line failed verification")?;
     } else {
-        // Support missing kernel_cmd_line_regex but only if the corresponding reference
+        // Support missing kernel_raw_cmd_line but only if the corresponding reference
         // value is set to skip. This is a temporary workaround until all clients are
         // migrated.
         anyhow::ensure!(
             matches!(
                 reference_values
-                    .kernel_cmd_line_regex
+                    .kernel_cmd_line_text
                     .as_ref()
-                    .expect("no kernel command line regex reference values")
+                    .expect("no kernel command line text reference values")
                     .r#type
                     .as_ref(),
-                Some(regex_reference_value::Type::Skip(_))
+                Some(text_reference_value::Type::Skip(_))
             ),
             "No kernel_raw_cmd_line provided"
         )
@@ -760,23 +763,61 @@ fn verify_hex_digests(actual: &HexDigest, expected: &HexDigest) -> anyhow::Resul
     }
 }
 
-fn verify_regex(actual: &str, expected: &RegexReferenceValue) -> anyhow::Result<()> {
+fn verify_text(
+    now_utc_millis: i64,
+    actual: &str,
+    expected: &TextReferenceValue,
+    endorsement: Option<&TransparentReleaseEndorsement>,
+) -> anyhow::Result<()> {
     match expected.r#type.as_ref() {
-        Some(regex_reference_value::Type::Skip(_)) => Ok(()),
-        Some(regex_reference_value::Type::Regex(regex)) => {
-            let re = Regex::new(regex.value.as_str()).map_err(|msg| {
-                anyhow::anyhow!("Couldn't parse regex in the reference value: {msg}")
-            })?;
-            if re.is_match(actual) {
-                Ok(())
-            } else {
-                anyhow::bail!(format!(
-                    "kernel cmd line doesn't match the reference value: {actual}"
-                ))
-            }
+        Some(text_reference_value::Type::Skip(_)) => Ok(()),
+        Some(text_reference_value::Type::Endorsement(public_keys)) => {
+            let endorsement =
+                endorsement.context("matching endorsement not found for text reference value")?;
+            verify_binary_endorsement(
+                now_utc_millis,
+                &endorsement.endorsement,
+                &endorsement.endorsement_signature,
+                &endorsement.rekor_log_entry,
+                &public_keys.endorser_public_key,
+                &public_keys.rekor_public_key,
+            )?;
+            // Compare the actual command line against the one inlined in the endorsement.
+            let regex = String::from_utf8(endorsement.subject.clone())
+                .expect("endorsement subject is not utf8");
+            verify_regex(actual, &regex).context("regex from endorsement does not match")
         }
-        None => Err(anyhow::anyhow!("missing skip or value in the regex reference value")),
+        Some(text_reference_value::Type::Regex(regex)) => {
+            verify_regex(actual, &regex.value).context("regex from reference values does not match")
+        }
+        Some(text_reference_value::Type::StringLiterals(string_literals)) => {
+            anyhow::ensure!(!string_literals.value.is_empty());
+            for sl in string_literals.value.iter() {
+                if sl == actual {
+                    return Ok(());
+                }
+            }
+            Err(anyhow::anyhow!(format!(
+                "value doesn't match the reference value string literal: {actual}"
+            )))
+        }
+        None => Err(anyhow::anyhow!("missing skip or value in the text reference value")),
     }
+}
+
+#[cfg(feature = "regex")]
+fn verify_regex(actual: &str, regex: &str) -> anyhow::Result<()> {
+    let re = Regex::new(regex)
+        .map_err(|msg| anyhow::anyhow!("couldn't parse regex in the reference value: {msg}"))?;
+    Ok(anyhow::ensure!(
+        re.is_match(actual),
+        format!("value doesn't match the reference value regex: {actual}")
+    ))
+}
+
+#[cfg(not(feature = "regex"))]
+fn verify_regex(_actual: &str, _regex: &str) -> anyhow::Result<()> {
+    Err(anyhow::anyhow!("verification of regex values not supported"))
 }
 
 struct ApplicationKeyValues {

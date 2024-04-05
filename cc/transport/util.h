@@ -14,22 +14,18 @@
  * limitations under the License.
  */
 
-#ifndef CC_CRYPTO_COMMON_H_
-#define CC_CRYPTO_COMMON_H_
+#ifndef CC_TRANSPORT_UTIL_H_
+#define CC_TRANSPORT_UTIL_H_
 
-#include "absl/strings/string_view.h"
+#include "absl/status/status.h"
+#include "grpcpp/grpcpp.h"
 
-namespace oak::crypto {
+namespace oak::transport {
 
-// Info string used by Hybrid Public Key Encryption.
-inline constexpr absl::string_view kOakHPKEInfo =
-    "Oak Hybrid Public Key Encryption v1";
+// Converts gRPC status to an absl status. The gRPC error status code is casted
+// and the error message is copied.
+absl::Status to_absl_status(const grpc::Status& grpc_status);
 
-struct DecryptionResult {
-  std::string plaintext;
-  std::string associated_data;
-};
+}  // namespace oak::transport
 
-}  // namespace oak::crypto
-
-#endif  // CC_CRYPTO_COMMON_H_
+#endif  // CC_TRANSPORT_UTIL_H_

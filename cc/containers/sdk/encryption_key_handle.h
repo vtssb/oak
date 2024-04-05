@@ -30,7 +30,18 @@ namespace oak::containers::sdk {
 
 class InstanceEncryptionKeyHandle : public ::oak::crypto::EncryptionKeyHandle {
  public:
-  absl::StatusOr<std::unique_ptr<::oak::crypto::RecipientContext>> GenerateRecipientContext(
+  absl::StatusOr<std::unique_ptr<::oak::crypto::RecipientContext>>
+  GenerateRecipientContext(
+      absl::string_view serialized_encapsulated_public_key) override;
+
+ private:
+  OrchestratorCryptoClient orchestrator_crypto_client_;
+};
+
+class GroupEncryptionKeyHandle : public ::oak::crypto::EncryptionKeyHandle {
+ public:
+  absl::StatusOr<std::unique_ptr<::oak::crypto::RecipientContext>>
+  GenerateRecipientContext(
       absl::string_view serialized_encapsulated_public_key) override;
 
  private:
