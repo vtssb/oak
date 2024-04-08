@@ -14,7 +14,7 @@ Pending Acknowledgement:
 - dingelish@ - ack
 - ernoc@ - ack
 - grobler@ - ack
-- ivanpetrov@
+- ivanpetrov@ - ack
 - jibbl@
 - julsh@ - ack
 - katsiaryna@ - ack
