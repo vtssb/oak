@@ -26,6 +26,7 @@ filegroup(
     srcs = [
         "target/image_binaries/oak_containers_orchestrator",
         "target/image_binaries/oak_containers_syslogd",
+        "target/image_binaries/kv-server",
     ],
     # This rule will fail unless build-bazel.sh has been run.
     tags = ["noci"],

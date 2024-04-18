@@ -37,6 +37,8 @@ RUN systemctl enable oak-orchestrator
 COPY ./target/oak_containers_syslogd_patched /usr/bin/oak_containers_syslogd
 RUN systemctl enable oak-syslogd
 
+COPY ./target/kv-server /usr/bin/kv-server
+
 # Only enable interactive logins if the kernel was booted with "debug" flag.
 RUN systemctl disable getty@
 RUN systemctl enable root-passwd
