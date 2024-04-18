@@ -22,6 +22,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "std")]
+extern crate std;
+
 use alloc::{boxed::Box, format, string::ToString, sync::Arc, vec::Vec};
 #[cfg(feature = "std")]
 use std::time::Instant;
@@ -31,7 +34,7 @@ use log::Level;
 use micro_rpc::StatusCode;
 use oak_functions_abi::{Request, Response};
 use spinning_top::Spinlock;
-use wasmtime::{self, Store};
+use wasmtime::Store;
 
 use crate::{
     logger::{OakLogger, StandaloneLogger},
@@ -395,7 +398,8 @@ impl WasmtimeHandler {
         logger: Arc<dyn OakLogger>,
         observer: Option<Arc<dyn Observer + Send + Sync>>,
     ) -> anyhow::Result<Self> {
-        let config = wasmtime::Config::new();
+        let mut config = wasmtime::Config::new();
+        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
         let engine = wasmtime::Engine::new(&config)
             .map_err(|err| anyhow::anyhow!("couldn't create Wasmtime engine: {:?}", err))?;
         let module = wasmtime::Module::new(&engine, wasm_module_bytes)
@@ -441,6 +445,7 @@ impl Handler for WasmtimeHandler {
         let instance = self.linker.instantiate(&mut store, module)?;
 
         // Does not work in wasmtime
+        // #[cfg(not(feature = "deny_sensitive_logging"))]
         // instance.exports(&store).for_each(|export| {
         //     store
         //         .data()
@@ -463,18 +468,21 @@ impl Handler for WasmtimeHandler {
         // included in the metric.
         #[cfg(feature = "std")]
         let now = Instant::now();
+        #[allow(unused)]
         let result = main.call(&mut store, ());
         #[cfg(feature = "std")]
         if let Some(ref observer) = self.observer {
             observer.wasm_invocation(now.elapsed());
         }
 
+        #[cfg(not(feature = "deny_sensitive_logging"))]
         store.data().logger.log_sensitive(
             Level::Info,
             &format!("running Wasm module completed with result: {:?}", result),
         );
 
-        let response_bytes = response.lock().clone();
+        let response_bytes = core::mem::take(response.lock().as_mut());
+        #[cfg(not(feature = "deny_sensitive_logging"))]
         store
             .data()
             .logger

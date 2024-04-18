@@ -231,9 +231,9 @@ git_repository(
 # Bazel rules for building OCI images and runtime bundles.
 http_archive(
     name = "rules_oci",
-    sha256 = "686f871f9697e08877b85ea6c16c8d48f911bf466c3aeaf108ca0ab2603c7306",
-    strip_prefix = "rules_oci-1.5.1",
-    url = "https://github.com/bazel-contrib/rules_oci/releases/download/v1.5.1/rules_oci-v1.5.1.tar.gz",
+    sha256 = "56d5499025d67a6b86b2e6ebae5232c72104ae682b5a21287770bd3bf0661abf",
+    strip_prefix = "rules_oci-1.7.5",
+    url = "https://github.com/bazel-contrib/rules_oci/releases/download/v1.7.5/rules_oci-v1.7.5.tar.gz",
 )
 
 load("@rules_oci//oci:dependencies.bzl", "rules_oci_dependencies")
@@ -255,6 +255,12 @@ oci_pull(
     digest = "sha256:6714977f9f02632c31377650c15d89a7efaebf43bab0f37c712c30fc01edb973",
     image = "gcr.io/distroless/cc-debian12",
     platforms = ["linux/amd64"],
+)
+
+oci_pull(
+    name = "oak_containers_sysimage_base",
+    digest = "sha256:c75cc6fa76fcf2af3129cd783ce31e8c1557277fd9a07333c270fc8e56ae8db3",
+    image = "europe-west2-docker.pkg.dev/oak-ci/oak-containers-sysimage-base/oak-containers-sysimage-base",
 )
 
 load("@//bazel:repositories.bzl", "oak_toolchain_repositories")
@@ -300,7 +306,7 @@ rust_register_toolchains(
     edition = "2021",
     versions = [
         "1.76.0",
-        "nightly/2023-11-15",
+        "nightly/2024-02-01",
     ],
 )
 
@@ -315,20 +321,41 @@ crates_repository(
     cargo_lockfile = "//:Cargo.bazel.lock",  # In Cargo-free mode this is used as output, not input.
     lockfile = "//:cargo-bazel-lock.json",  # Shares most contents with cargo_lockfile.
     packages = {
+        "acpi": crate.spec(version = "*"),
+        "aes-gcm": crate.spec(
+            default_features = False,
+            features = [
+                "aes",
+                "alloc",
+            ],
+            version = "*",
+        ),
+        "aml": crate.spec(version = "*"),
         "anyhow": crate.spec(
             default_features = False,
             version = "*",
         ),
+        "arrayvec": crate.spec(
+            default_features = False,
+            version = "*",
+        ),
+        "assertables": crate.spec(version = "*"),
         "async-trait": crate.spec(
             default_features = False,
             version = "*",
         ),
+        "atomic_refcell": crate.spec(version = "*"),
         "base64": crate.spec(
             default_features = False,
             features = ["alloc"],
             version = "0.21",
         ),
         "bitflags": crate.spec(version = "*"),
+        "bitvec": crate.spec(
+            default_features = False,
+            version = "*",
+        ),
+        "bytes": crate.spec(version = "*"),
         "ciborium": crate.spec(
             default_features = False,
             version = "*",
@@ -337,18 +364,35 @@ crates_repository(
             default_features = False,
             version = "*",
         ),
+        # Pin to 4.1.1 see issue #4952
+        # TODO: #4952 - Remove this pinning.
+        "curve25519-dalek": crate.spec(
+            default_features = False,
+            version = "=4.1.1",
+        ),
         "ecdsa": crate.spec(
             default_features = False,
             features = [
-                "pkcs8",
+                "der",
                 "pem",
+                "pkcs8",
+                "signing",
             ],
             version = "*",
         ),
         "getrandom": crate.spec(
             default_features = False,
-            # While getrandom isn't used directly, rdrand is required to support x64_64-unknown-none.
+            # rdrand is required to support x64_64-unknown-none.
             features = ["rdrand"],
+            version = "*",
+        ),
+        "goblin": crate.spec(
+            default_features = False,
+            features = [
+                "elf32",
+                "elf64",
+                "endian_fd",
+            ],
             version = "*",
         ),
         "hex": crate.spec(
@@ -357,6 +401,28 @@ crates_repository(
             version = "*",
         ),
         "hkdf": crate.spec(
+            default_features = False,
+            version = "*",
+        ),
+        "hpke": crate.spec(
+            default_features = False,
+            features = [
+                "alloc",
+                "x25519",
+            ],
+            version = "*",
+        ),
+        "libm": crate.spec(version = "*"),
+        "linked_list_allocator": crate.spec(
+            features = [
+                "alloc_ref",
+            ],
+            version = "*",
+        ),
+        "lock_api": crate.spec(
+            features = ["arc_lock"],
+        ),
+        "log": crate.spec(
             default_features = False,
             version = "*",
         ),
@@ -377,6 +443,15 @@ crates_repository(
                 "pem",
             ],
             version = "0.13.0",
+        ),
+        "pkcs8": crate.spec(
+            default_features = False,
+            features = ["alloc"],
+            version = "*",
+        ),
+        "primeorder": crate.spec(
+            default_features = False,
+            version = "*",
         ),
         "prost": crate.spec(
             default_features = False,
@@ -399,6 +474,7 @@ crates_repository(
             default_features = False,
             version = "0.9.6",
         ),
+        "self_cell": crate.spec(version = "*"),
         "serde": crate.spec(
             default_features = False,
             features = ["derive"],
@@ -413,6 +489,8 @@ crates_repository(
             default_features = False,
             version = "*",
         ),
+        "snafu": crate.spec(version = "*"),
+        "spinning_top": crate.spec(version = "*"),
         "static_assertions": crate.spec(version = "*"),
         "strum": crate.spec(
             default_features = False,
@@ -427,25 +505,36 @@ crates_repository(
             ],
             version = "0.3.28",
         ),
+        "uart_16550": crate.spec(version = "*"),
+        "virtio-drivers": crate.spec(version = "*"),
         "x509-cert": crate.spec(
             default_features = False,
             features = ["pem"],
             version = "0.2.5",
         ),
+        "x86_64": crate.spec(version = "0.14"),
         "zerocopy": crate.spec(
             default_features = False,
             features = ["derive"],
             version = "*",
         ),
         "zeroize": crate.spec(
-            default_features = False,
             features = ["derive"],
             version = "*",
         ),
     },
-    supported_platform_triples = ["x86_64-unknown-linux-gnu"],  # Non needed with Bazel+Cargo - possibly reading .cargo dir.
+    rust_version = "nightly/2024-02-01",
+    supported_platform_triples = ["x86_64-unknown-linux-gnu"],
 )
 
 load("@oak_crates_index//:defs.bzl", "crate_repositories")
 
 crate_repositories()
+
+load("//bazel/tools/prost:deps.bzl", "prost_toolchain_crates")
+
+prost_toolchain_crates()
+
+load("//bazel/tools/prost:defs.bzl", "setup_prost_toolchain")
+
+setup_prost_toolchain()

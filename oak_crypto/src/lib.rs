@@ -22,17 +22,6 @@ extern crate static_assertions;
 #[cfg(test)]
 extern crate std;
 
-pub mod proto {
-    pub mod oak {
-        pub mod crypto {
-            pub mod v1 {
-                #![allow(dead_code)]
-                include!(concat!(env!("OUT_DIR"), "/oak.crypto.v1.rs"));
-            }
-        }
-    }
-}
-
 pub mod encryption_key;
 pub mod encryptor;
 pub mod hpke;
