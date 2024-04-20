@@ -1,0 +1,9 @@
+[Match]
+Name=ens3
+
+[Network]
+DHCP=yes
+
+[DHCP]
+SendHostname=True
+Hostname=kvserver.local

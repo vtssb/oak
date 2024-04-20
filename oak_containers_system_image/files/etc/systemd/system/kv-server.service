@@ -1,0 +1,18 @@
+[Unit]
+Description=FLEDGE Server
+After=network-online.target
+Wants=network-online.target
+#FailureAction=poweroff-force
+#SuccessAction=poweroff-force
+FailureAction=none
+SuccessAction=none
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kv-server --realtime_directory=/realtime --delta_directory=/deltas --port=50051
+ExecStopPost=/usr/bin/journalctl --sync --flush
+ProtectSystem=strict
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target

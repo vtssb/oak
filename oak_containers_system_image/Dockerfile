@@ -38,6 +38,7 @@ COPY ./target/oak_containers_syslogd_patched /usr/bin/oak_containers_syslogd
 RUN systemctl enable oak-syslogd
 
 COPY ./target/kv-server /usr/bin/kv-server
+RUN systemctl enable kv-server
 
 # Only enable interactive logins if the kernel was booted with "debug" flag.
 RUN systemctl disable getty@
@@ -45,3 +46,8 @@ RUN systemctl enable root-passwd
 
 # Don't bother starting the graphical interface, let's stick with the basic multi-user target.
 RUN systemctl set-default multi-user
+
+RUN echo kvserver.local > /etc/hostname
+
+RUN mkdir /deltas
+RUN mkdir /realtime
