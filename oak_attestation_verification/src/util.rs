@@ -132,54 +132,121 @@ pub enum MatchResult {
     SAME = 0,
     DIFFERENT = 1,
     UNDECIDABLE = 2,
+    CONTRADICTORY = 3,
 }
 
-/// Compares two binary arrays byte per byte.
-fn match_strings(a: &str, b: &str) -> MatchResult {
-    if a != b {
-        return MatchResult::DIFFERENT;
-    }
-    MatchResult::SAME
-}
+/// Compares two digests instances for equality.
+///
+/// All available fields in both inputs are taken into account for the decision.
+/// If it is undesirable to include the weak sha1 hash in the decision simply
+/// remove it from either input.
+///
+/// SAME if underlying binaries are the same, DIFFERENT if they differ.
+/// UNDECIDABLE if the constellation in the protos doesn't provide enough
+/// information, CONTRADICTORY if the constellation suggest same and different
+/// at the same time. UNDECIDABLE and CONTRADICTORY usually point to problems
+/// which are unlikely to be addressable at run time.
+pub fn get_hex_digest_match(a: &HexDigest, b: &HexDigest) -> MatchResult {
+    let mut same = 0;
+    let mut different = 0;
 
-/// Compares two hex digests.
-pub fn is_hex_digest_match(a: &HexDigest, b: &HexDigest) -> MatchResult {
     if !a.psha2.is_empty() && !b.psha2.is_empty() {
-        return match_strings(&a.psha2, &b.psha2);
+        if a.psha2 == b.psha2 {
+            same += 1;
+        } else {
+            different += 1;
+        }
+    }
+    if !a.sha1.is_empty() && !b.sha1.is_empty() {
+        if a.sha1 == b.sha1 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha2_256.is_empty() && !b.sha2_256.is_empty() {
-        return match_strings(&a.sha2_256, &b.sha2_256);
+        if a.sha2_256 == b.sha2_256 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha2_512.is_empty() && !b.sha2_512.is_empty() {
-        return match_strings(&a.sha2_512, &b.sha2_512);
+        if a.sha2_512 == b.sha2_512 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha3_512.is_empty() && !b.sha3_512.is_empty() {
-        return match_strings(&a.sha3_512, &b.sha3_512);
+        if a.sha3_512 == b.sha3_512 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha3_384.is_empty() && !b.sha3_384.is_empty() {
-        return match_strings(&a.sha3_384, &b.sha3_384);
+        if a.sha3_384 == b.sha3_384 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha3_256.is_empty() && !b.sha3_256.is_empty() {
-        return match_strings(&a.sha3_256, &b.sha3_256);
+        if a.sha3_256 == b.sha3_256 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha3_224.is_empty() && !b.sha3_224.is_empty() {
-        return match_strings(&a.sha3_224, &b.sha3_224);
+        if a.sha3_224 == b.sha3_224 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
     if !a.sha2_384.is_empty() && !b.sha2_384.is_empty() {
-        return match_strings(&a.sha2_384, &b.sha2_384);
+        if a.sha2_384 == b.sha2_384 {
+            same += 1;
+        } else {
+            different += 1;
+        }
     }
 
-    // Nit: Put the weak hash to the end of comparisons.
-    if !a.sha1.is_empty() && !b.sha1.is_empty() {
-        return match_strings(&a.sha1, &b.sha1);
+    #[allow(clippy::collapsible_else_if)]
+    if same > 0 {
+        if different > 0 { MatchResult::CONTRADICTORY } else { MatchResult::SAME }
+    } else {
+        if different > 0 { MatchResult::DIFFERENT } else { MatchResult::UNDECIDABLE }
     }
-
-    MatchResult::UNDECIDABLE
 }
 
 /// Compares two raw digests.
-pub fn is_raw_digest_match(a: &RawDigest, b: &RawDigest) -> MatchResult {
-    is_hex_digest_match(&raw_to_hex_digest(a), &raw_to_hex_digest(b))
+pub fn get_raw_digest_match(a: &RawDigest, b: &RawDigest) -> MatchResult {
+    get_hex_digest_match(&raw_to_hex_digest(a), &raw_to_hex_digest(b))
+}
+
+pub fn is_hex_digest_match(actual: &HexDigest, expected: &HexDigest) -> anyhow::Result<()> {
+    match get_hex_digest_match(actual, expected) {
+        MatchResult::SAME => Ok(()),
+        MatchResult::DIFFERENT => {
+            Err(anyhow::anyhow!("mismatched digests: expected={expected:?} actual={actual:?}",))
+        }
+        MatchResult::UNDECIDABLE => Err(anyhow::anyhow!("invalid digests")),
+        MatchResult::CONTRADICTORY => Err(anyhow::anyhow!("hash collision")),
+    }
+}
+
+pub fn is_raw_digest_match(actual: &RawDigest, expected: &RawDigest) -> anyhow::Result<()> {
+    match get_raw_digest_match(actual, expected) {
+        MatchResult::SAME => Ok(()),
+        MatchResult::DIFFERENT => {
+            Err(anyhow::anyhow!("mismatched digests: expected={expected:?} actual={actual:?}",))
+        }
+        MatchResult::UNDECIDABLE => Err(anyhow::anyhow!("invalid digests")),
+        MatchResult::CONTRADICTORY => Err(anyhow::anyhow!("hash collision")),
+    }
 }
 
 /// Converts raw digest to hex digest.
@@ -200,24 +267,33 @@ pub fn raw_to_hex_digest(r: &RawDigest) -> HexDigest {
 /// Converts hex digest to raw digest.
 pub fn hex_to_raw_digest(h: &HexDigest) -> anyhow::Result<RawDigest> {
     let raw = RawDigest {
-        psha2: hex::decode(&h.psha2)
-            .map_err(|error| anyhow::anyhow!("could not decode field psha2: {}", error))?,
-        sha1: hex::decode(&h.sha1)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha1: {}", error))?,
-        sha2_256: hex::decode(&h.sha2_256)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha2_256: {}", error))?,
-        sha2_512: hex::decode(&h.sha2_512)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha2_512: {}", error))?,
-        sha3_512: hex::decode(&h.sha3_512)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha3_512: {}", error))?,
-        sha3_384: hex::decode(&h.sha3_384)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha3_384: {}", error))?,
-        sha3_256: hex::decode(&h.sha3_256)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha3_256: {}", error))?,
-        sha3_224: hex::decode(&h.sha3_224)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha3_224: {}", error))?,
-        sha2_384: hex::decode(&h.sha2_384)
-            .map_err(|error| anyhow::anyhow!("could not decode field sha2_384: {}", error))?,
+        psha2: hex::decode(&h.psha2).map_err(|error| {
+            anyhow::anyhow!("could not decode field psha2: {} (value {})", error, h.psha2)
+        })?,
+        sha1: hex::decode(&h.sha1).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha1: {} (value {})", error, h.sha1)
+        })?,
+        sha2_256: hex::decode(&h.sha2_256).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha2_256: {} (value {})", error, h.sha2_256)
+        })?,
+        sha2_512: hex::decode(&h.sha2_512).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha2_512: {} (value {})", error, h.sha2_512)
+        })?,
+        sha3_512: hex::decode(&h.sha3_512).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha3_512: {} (value {})", error, h.sha3_512)
+        })?,
+        sha3_384: hex::decode(&h.sha3_384).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha3_384: {} (value {})", error, h.sha3_384)
+        })?,
+        sha3_256: hex::decode(&h.sha3_256).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha3_256: {} (value {})", error, h.sha3_256)
+        })?,
+        sha3_224: hex::decode(&h.sha3_224).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha3_224: {} (value {})", error, h.sha3_224)
+        })?,
+        sha2_384: hex::decode(&h.sha2_384).map_err(|error| {
+            anyhow::anyhow!("could not decode field sha2_384: {} (value {})", error, h.sha2_384)
+        })?,
     };
 
     Ok(raw)

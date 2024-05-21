@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_cc//cc:defs.bzl", "cc_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
@@ -24,25 +24,24 @@ package(
 )
 
 proto_library(
-    name = "interfaces_proto",
-    srcs = ["interfaces.proto"],
+    name = "oak_functions_proto",
+    srcs = ["oak_functions.proto"],
     deps = [
-        "//proto/attestation:endorsement_proto",
         "//proto/attestation:evidence_proto",
         "//proto/crypto:crypto_proto",
-        "//proto/session:messages_proto",
-        "@com_google_protobuf//:empty_proto",
+        "//proto/micro_rpc:options_proto",
     ],
 )
 
 cc_proto_library(
-    name = "interfaces_cc_proto",
-    deps = [":interfaces_proto"],
+    name = "oak_functions_cc_proto",
+    deps = [":oak_functions_proto"],
 )
 
-cc_grpc_library(
-    name = "interfaces_cc_grpc",
-    srcs = [":interfaces_proto"],
-    grpc_only = True,
-    deps = [":interfaces_cc_proto"],
+build_test(
+    name = "build_test",
+    targets = [
+        ":oak_functions_proto",
+        ":oak_functions_cc_proto",
+    ],
 )

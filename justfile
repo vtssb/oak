@@ -92,8 +92,37 @@ oak_containers_kernel:
         oak_containers_kernel/bin/subjects \
         oak_containers_kernel/target/bzImage
 
-oak_containers_system_image:
-    env --chdir=oak_containers_system_image DOCKER_BUILDKIT=0 bash build.sh
+oak_containers_system_image: oak_containers_orchestrator oak_containers_syslogd
+    # Copy dependencies into bazel build.
+    mkdir --parents oak_containers_system_image/target/image_binaries
+    cp --preserve=timestamps \
+        oak_containers_orchestrator/target/oak_containers_orchestrator \
+        oak_containers_system_image/target/image_binaries/oak_containers_orchestrator
+    cp --preserve=timestamps \
+        oak_containers_syslogd/target/oak_containers_syslogd_patched \
+        oak_containers_system_image/target/image_binaries/oak_containers_syslogd
+    # Build and compress.
+    bazel build oak_containers_system_image
+    cp --preserve=timestamps \
+        bazel-bin/oak_containers_system_image/oak_containers_system_image.tar \
+        oak_containers_system_image/target/image.tar
+    xz --force oak_containers_system_image/target/image.tar
+
+oak_containers_orchestrator:
+    env --chdir=oak_containers_orchestrator \
+        cargo build --profile=release-lto --target=x86_64-unknown-linux-musl \
+        -Z unstable-options --out-dir=target
+
+oak_containers_syslogd:
+    env --chdir=oak_containers_syslogd \
+        cargo build --release -Z unstable-options --out-dir=target
+    # We can't patch the binary in-place, as that would confuse cargo.
+    # Therefore we copy it to a new location and patch there.
+    cp \
+        oak_containers_syslogd/target/oak_containers_syslogd \
+        oak_containers_syslogd/target/oak_containers_syslogd_patched
+    patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --set-rpath "" \
+        oak_containers_syslogd/target/oak_containers_syslogd_patched
 
 # Profile the Wasm execution and generate a flamegraph.
 profile_wasm:
@@ -142,6 +171,22 @@ kokoro_run_tests: all_ensure_no_std
 clang-tidy:
     bazel build --config=clang-tidy //cc/...
 
+bare_metal_crates := "//oak_linux_boot_params //oak_channel //oak_core //oak_virtio //third_party/rust-hypervisor-firmware-virtio"
+
+bazel-ci:
+    # The --noshow_progress and --curses=no prevent a lot of progress bar noise in the CI logs.
+    #
+    # The --show_result leads to all of the built packages being logged at the
+    # end, so we can visually verify that CI tasks are building everythign we want.
+    #
+    # --build_tag_filters=-noci allow us to skip broken/flaky/specialized test
+    # targets during CI builds by adding tags = ["noci"]
+    bazel build --show_result=1000000 --noshow_progress --curses=no --build_tag_filters=-noci -- //...:all
+    bazel test  --noshow_progress --curses=no --build_tag_filters=-noci -- //...:all
+    bazel run oak_proto_rust:verify_generated
+
+    # Some crates also need to be built for x86_64-unknown-none.
+    bazel build --platforms=//:x86_64-unknown-none --show_result=1000000 --noshow_progress --curses=no --build_tag_filters=-noci -- {{bare_metal_crates}}
+
 oak_on_prem_cloud_hypervisor:
     env --chdir=oak_on_prem_cloud_hypervisor make
-

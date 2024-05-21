@@ -14,7 +14,8 @@
 // limitations under the License.
 //
 
-use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, rc::Rc, sync::Arc, vec::Vec};
+use core::cell::Cell;
 
 use log::Level;
 use oak_functions_sdk::proto::oak::functions::wasm::v1::{
@@ -22,30 +23,25 @@ use oak_functions_sdk::proto::oak::functions::wasm::v1::{
     LookupDataRequest, LookupDataResponse, ReadRequestRequest, ReadRequestResponse, StdWasmApi,
     StdWasmApiServer, TestRequest, TestResponse, WriteResponseRequest, WriteResponseResponse,
 };
-use spinning_top::Spinlock;
 
 use super::{WasmApi, WasmApiFactory};
 use crate::{
     logger::{OakLogger, StandaloneLogger},
-    lookup::{format_bytes, limit, LookupData, LookupDataManager},
+    lookup::{LookupData, LookupDataManager},
 };
 
 /// The main purpose of this factory is to allow creating a new instance of the
 /// [`StdWasmApiImpl`] for each incoming gRPC request, with an immutable
 /// snapshot of the current lookup data.
-pub struct StdWasmApiFactory {
-    pub lookup_data_manager: Arc<LookupDataManager>,
+pub struct StdWasmApiFactory<const S: usize> {
+    pub lookup_data_manager: Arc<LookupDataManager<S>>,
 }
 
-impl WasmApiFactory for StdWasmApiFactory {
-    fn create_wasm_api(
-        &self,
-        request: Vec<u8>,
-        response: Arc<Spinlock<Vec<u8>>>,
-    ) -> Box<dyn WasmApi> {
+impl<const S: usize> WasmApiFactory for StdWasmApiFactory<S> {
+    fn create_wasm_api(&self, request: Vec<u8>, response: Rc<Cell<Vec<u8>>>) -> Box<dyn WasmApi> {
         Box::new(StdWasmApiImpl {
             lookup_data: self.lookup_data_manager.create_lookup_data(),
-            logger: Arc::new(StandaloneLogger),
+            logger: Rc::new(StandaloneLogger),
             request,
             response,
         })
@@ -57,16 +53,16 @@ impl WasmApiFactory for StdWasmApiFactory {
 /// There are probably more locks than necessary here, it should be possible to
 /// reduce them in the future.
 #[derive(Clone)]
-pub struct StdWasmApiImpl {
-    lookup_data: LookupData,
-    logger: Arc<dyn OakLogger>,
+pub struct StdWasmApiImpl<const S: usize> {
+    lookup_data: LookupData<S>,
+    logger: Rc<dyn OakLogger>,
     /// Current request, as received from the client.
     request: Vec<u8>,
     /// Current response, as received from the Wasm module.
-    response: Arc<Spinlock<Vec<u8>>>,
+    response: Rc<Cell<Vec<u8>>>,
 }
 
-impl StdWasmApi for StdWasmApiImpl {
+impl<const S: usize> StdWasmApi for StdWasmApiImpl<S> {
     fn read_request(
         &mut self,
         _: ReadRequestRequest,
@@ -79,13 +75,16 @@ impl StdWasmApi for StdWasmApiImpl {
         req: WriteResponseRequest,
     ) -> Result<WriteResponseResponse, micro_rpc::Status> {
         self.logger.log_sensitive(Level::Debug, "invoked write_response");
-        *self.response.lock() = req.body;
+        self.response.set(req.body);
+
         Ok(WriteResponseResponse::default())
     }
 
+    #[allow(unused_variables)]
     fn log(&mut self, request: LogRequest) -> Result<LogResponse, ::micro_rpc::Status> {
         self.logger.log_sensitive(Level::Debug, "invoked log");
-        self.logger.log_sensitive(Level::Debug, &format!("[Wasm] {}", request.message));
+        #[cfg(not(feature = "deny_sensitive_logging"))]
+        self.logger.log_sensitive(Level::Debug, &alloc::format!("[Wasm] {}", request.message));
         Ok(LogResponse::default())
     }
 
@@ -95,24 +94,32 @@ impl StdWasmApi for StdWasmApiImpl {
     ) -> Result<LookupDataResponse, ::micro_rpc::Status> {
         // The request is the key to lookup.
         let key = request.key;
-        let key_to_log = limit(&key, 512);
-        self.logger.log_sensitive(
-            Level::Debug,
-            &format!("lookup_data(): key: {}", format_bytes(key_to_log)),
-        );
+
+        #[cfg(not(feature = "deny_sensitive_logging"))]
+        {
+            let key_to_log = crate::lookup::limit(&key, 512);
+            self.logger.log_sensitive(
+                Level::Debug,
+                &alloc::format!("lookup_data(): key: {}", crate::lookup::format_bytes(key_to_log)),
+            );
+        }
         let value = self.lookup_data.get(&key);
 
         // Log found value.
+        #[cfg(not(feature = "deny_sensitive_logging"))]
         value.as_ref().map_or_else(
             || {
                 self.logger.log_sensitive(Level::Debug, "storage_get_item(): value not found");
             },
             |value| {
                 // Truncate value for logging.
-                let value_to_log = limit(value, 512);
+                let value_to_log = crate::lookup::limit(value, 512);
                 self.logger.log_sensitive(
                     Level::Debug,
-                    &format!("storage_get_item(): value: {}", format_bytes(value_to_log)),
+                    &alloc::format!(
+                        "storage_get_item(): value: {}",
+                        crate::lookup::format_bytes(value_to_log)
+                    ),
                 );
             },
         );
@@ -127,8 +134,11 @@ impl StdWasmApi for StdWasmApiImpl {
         // The request contains the keys to lookup.
         let keys = request.keys;
 
-        self.logger
-            .log_sensitive(Level::Debug, &format!("lookup_data_multi(): {} keys", keys.len()));
+        #[cfg(not(feature = "deny_sensitive_logging"))]
+        self.logger.log_sensitive(
+            Level::Debug,
+            &alloc::format!("lookup_data_multi(): {} keys", keys.len()),
+        );
 
         let values: Vec<BytesValue> = keys
             .iter()
@@ -147,7 +157,7 @@ impl StdWasmApi for StdWasmApiImpl {
     }
 }
 
-impl WasmApi for StdWasmApiImpl {
+impl<const S: usize> WasmApi for StdWasmApiImpl<S> {
     fn transport(&mut self) -> Box<dyn micro_rpc::Transport<Error = !>> {
         Box::new(StdWasmApiServer::new(self.clone()))
     }

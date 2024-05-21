@@ -30,7 +30,7 @@ use tempfile::{tempdir, TempDir};
 struct RequestContext {
     request: Vec<u8>,
     response: Vec<u8>,
-    lookup_data: LookupData,
+    lookup_data: LookupData<16>,
 }
 
 thread_local! {
@@ -129,7 +129,7 @@ struct SharedLibrary {
 /// Variant of a Handler that dynamically loads a `.so` file and invokes native
 /// code to handle requests from there.
 pub struct NativeHandler {
-    lookup_data_manager: Arc<LookupDataManager>,
+    lookup_data_manager: Arc<LookupDataManager<16>>,
 
     #[allow(dead_code)]
     observer: Option<Arc<dyn Observer + Send + Sync>>,
@@ -185,6 +185,7 @@ impl NativeHandler {
 
 impl Handler for NativeHandler {
     type HandlerType = NativeHandler;
+    type HandlerConfig = ();
 
     /// Creates a new native handler.
     ///
@@ -195,8 +196,9 @@ impl Handler for NativeHandler {
     /// adheres to the semantics we require. This method should really be
     /// marked `unsafe` because of that.
     fn new_handler(
+        _config: (),
         module_bytes: &[u8],
-        lookup_data_manager: Arc<LookupDataManager>,
+        lookup_data_manager: Arc<LookupDataManager<16>>,
         observer: Option<Arc<dyn Observer + Send + Sync>>,
     ) -> anyhow::Result<NativeHandler> {
         let directory = tempdir().context("could not create temporary directory")?;

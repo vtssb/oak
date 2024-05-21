@@ -1,3 +1,5 @@
+cargo-features = ["trim-paths"]
+
 [workspace]
 resolver = "2"
 members = [
@@ -6,8 +8,11 @@ members = [
   "micro_rpc_build",
   "micro_rpc_tests",
   "oak_attestation",
+  "oak_attestation_explain",
+  "oak_attestation_explain_cli",
   "oak_attestation_integration_tests",
   "oak_attestation_verification",
+  "oak_attestation_verification_test_utils",
   "oak_channel",
   "oak_client",
   "oak_containers_hello_world_trusted_app",
@@ -50,6 +55,7 @@ members = [
   "oak_restricted_kernel_sdk",
   "oak_restricted_kernel_launcher",
   "oak_restricted_kernel_orchestrator",
+  "oak_session",
   "oak_sev_guest",
   "oak_sev_snp_attestation_report",
   "oak_simple_io",
@@ -77,6 +83,10 @@ exclude = [
   "third_party/rust-hypervisor-firmware-virtio",
 ]
 
+[profile.release]
+strip = "debuginfo" # Debug info is not always deterministic.
+trim-paths = "all"  # Remove path prefixes outside the workspace root.
+
 # Special version of release that enables more aggressive optimizations.
 # See https://doc.rust-lang.org/cargo/reference/profiles.html for more details.
 [profile.release-lto]
@@ -94,7 +104,9 @@ benchmark = { path = "./oak_functions/examples/benchmark/module" }
 micro_rpc = { path = "./micro_rpc" }
 micro_rpc_build = { path = "./micro_rpc_build" }
 oak_attestation = { path = "./oak_attestation" }
+oak_attestation_explain = { path = "./oak_attestation_explain" }
 oak_attestation_verification = { path = "./oak_attestation_verification" }
+oak_attestation_verification_test_utils = { path = "./oak_attestation_verification_test_utils" }
 oak_channel = { path = "./oak_channel" }
 oak_client = { path = "./oak_client" }
 oak_containers_orchestrator = { path = "./oak_containers_orchestrator" }
@@ -125,6 +137,7 @@ oak_restricted_kernel_sdk = { path = "./oak_restricted_kernel_sdk" }
 oak_restricted_kernel_sdk_proc_macro = { path = "./oak_restricted_kernel_sdk_proc_macro" }
 oak_restricted_kernel_interface = { path = "./oak_restricted_kernel_interface" }
 oak_restricted_kernel_orchestrator = { path = "./oak_restricted_kernel_orchestrator" }
+oak_session = { path = "./oak_session" }
 oak_sev_guest = { path = "./oak_sev_guest", default-features = false }
 oak_sev_snp_attestation_report = { path = "./oak_sev_snp_attestation_report" }
 oak_stage0_dice = { path = "./stage0_dice" }

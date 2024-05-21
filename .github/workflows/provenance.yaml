@@ -27,7 +27,9 @@ jobs:
         buildconfig:
           - buildconfigs/key_xor_test_app.toml
           - buildconfigs/oak_containers_kernel.toml
+          - buildconfigs/oak_containers_orchestrator.toml
           - buildconfigs/oak_containers_stage1.toml
+          - buildconfigs/oak_containers_syslogd.toml
           - buildconfigs/oak_containers_system_image.toml
           - buildconfigs/oak_echo_enclave_app.toml
           - buildconfigs/oak_echo_raw_enclave_app.toml
@@ -55,3 +57,4 @@ jobs:
       ENT_API_KEY: ${{ secrets.ENT_API_KEY }}
       # Secret key corresponding to `ent-public-key` above, used to sign Ent tags.
       ENT_SECRET_KEY: ${{ secrets.ENT_SECRET_KEY }}
+      GCP_SERVICE_ACCOUNT_KEY_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY_JSON }}
