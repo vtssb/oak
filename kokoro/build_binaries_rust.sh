@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
 
-set -o errexit
-set -o nounset
-set -o xtrace
-set -o pipefail
-
-export CI=kokoro
-export RUST_BACKTRACE=1
-export RUST_LOG=debug
-export XDG_RUNTIME_DIR=/var/run
-
-# Make sure we're in the root of the repository.
-cd "$(dirname "$0")/.."
+# shellcheck source=./kokoro/common.sh
+source "$(dirname "$0")/common.sh"
 
 ./scripts/docker_pull
 ./scripts/docker_run nix develop .#ci --command just kokoro_build_binaries_rust
@@ -30,7 +20,6 @@ touch "${KOKORO_ARTIFACTS_DIR}/binaries/git_commit_${KOKORO_GIT_COMMIT_oak:?}"
 # Copy the generated binaries to Placer. The timestamps are used to convey
 # the creation time.
 readonly generated_binaries=(
-    ./oak_restricted_kernel_wrapper/target/x86_64-unknown-none/release/oak_restricted_kernel_simple_io_wrapper_bin
     ./oak_restricted_kernel_wrapper/target/x86_64-unknown-none/release/oak_restricted_kernel_simple_io_init_rd_wrapper_bin
     ./oak_restricted_kernel_wrapper/cmd_line_regex.txt
     ./stage0_bin/target/x86_64-unknown-none/release/stage0_bin
@@ -42,7 +31,6 @@ readonly generated_binaries=(
     ./enclave_apps/target/x86_64-unknown-none/release/oak_orchestrator
 )
 readonly binary_names=(
-    oak_restricted_kernel_simple_io_wrapper_bin
     oak_restricted_kernel_simple_io_init_rd_wrapper_bin
     oak_restricted_kernel_simple_io_wrapper_cmd_line_regex
     stage0_bin

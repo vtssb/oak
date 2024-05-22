@@ -172,9 +172,9 @@ android_sdk_repository(
 
 http_archive(
     name = "rules_foreign_cc",
-    sha256 = "2a4d07cd64b0719b39a7c12218a3e507672b82a97b98c6a89d38565894cf7c51",
-    strip_prefix = "rules_foreign_cc-0.9.0",
-    url = "https://github.com/bazelbuild/rules_foreign_cc/archive/refs/tags/0.9.0.tar.gz",
+    sha256 = "5816f4198184a1e0e682d7e6b817331219929401e2f18358fac7f7b172737976",
+    strip_prefix = "rules_foreign_cc-0.10.0",
+    url = "https://github.com/bazelbuild/rules_foreign_cc/archive/refs/tags/0.10.0.tar.gz",
 )
 
 load("@rules_foreign_cc//foreign_cc:repositories.bzl", "rules_foreign_cc_dependencies")
@@ -351,13 +351,55 @@ crate_universe_dependencies(bootstrap = True)
 
 load("@rules_rust//crate_universe:defs.bzl", "crate", "crates_repository")
 
+# Build jemalloc with bazel, so that we can provide it to the tikv-jemallocator build script.
+git_repository(
+    name = "jemalloc",
+    build_file = "//bazel:jemalloc.BUILD",
+    # jemalloc pointer for tikv-jemalloc-sys submodule pointer at 0.5.3
+    commit = "e13ca993e8ccb9ba9847cc330696e02839f328f7",
+
+    # Fix an issue when building jemalloc with gcc 10.3 (which is the version we
+    # currently use due to the aspect_gcc target)
+    # There's a target in the Makefile that uses the -MM flag, and
+    # when it does that, it doesn't include the $(CFLAGS).
+    # This results in __GNUC_PREREQ not being defined, which causes compiler
+    # failures.
+    # As a workaround, we patch that line in the Makefile.in to include the CFLAGS.
+    # TODO: b/341166977 Remove this when we can.
+    patch_cmds = ["sed -i '481s/-MM/$(CFLAGS) -MM/' Makefile.in"],
+    remote = "https://github.com/tikv/jemalloc",
+)
+
 # Default crate repository - some crates may require std.
 crates_repository(
     name = "oak_crates_index",
+    annotations = {
+        # Provide the jemalloc library built by the library included above.
+        # The tikv-jemalloc-sys crate using by tikv-jemallocator uses a build script to run
+        # configure/make for libjemalloc. This doesn't work out of the box. The suggestion is to
+        # instead build libjemalloc with bazel, and then provide the generated lbirary to the
+        # build script.
+        #
+        # See: https://github.com/bazelbuild/rules_rust/issues/1670
+        # The example there didn't work exactly as written in this context, but I was able
+        # to modify it to get it working.
+        "tikv-jemalloc-sys": [crate.annotation(
+            build_script_data = [
+                "@jemalloc//:gen_dir",
+            ],
+            build_script_env = {
+                "JEMALLOC_OVERRIDE": "$(execpath @jemalloc//:gen_dir)/lib/libjemalloc.a",
+            },
+            data = ["@jemalloc//:gen_dir"],
+            version = "*",
+            deps = ["@jemalloc"],
+        )],
+    },
     cargo_lockfile = "//:Cargo.bazel.lock",  # In Cargo-free mode this is used as output, not input.
     lockfile = "//:cargo-bazel-lock.json",  # Shares most contents with cargo_lockfile.
     packages = {
         "acpi": crate.spec(version = "*"),
+        "aead": crate.spec(version = "*"),
         "aes-gcm": crate.spec(
             default_features = False,
             features = [
@@ -369,6 +411,9 @@ crates_repository(
         "aml": crate.spec(version = "*"),
         "anyhow": crate.spec(
             default_features = False,
+            version = "*",
+        ),
+        "async-stream": crate.spec(
             version = "*",
         ),
         "arrayvec": crate.spec(
@@ -396,6 +441,10 @@ crates_repository(
             default_features = False,
             version = "*",
         ),
+        "clap": crate.spec(
+            features = ["derive"],
+            version = "*",
+        ),
         "coset": crate.spec(
             default_features = False,
             version = "*",
@@ -417,9 +466,6 @@ crates_repository(
             version = "*",
         ),
         "getrandom": crate.spec(
-            default_features = False,
-            # rdrand is required to support x64_64-unknown-none.
-            features = ["rdrand"],
             version = "*",
         ),
         "goblin": crate.spec(
@@ -462,6 +508,27 @@ crates_repository(
             default_features = False,
             version = "*",
         ),
+        "nix": crate.spec(
+            features = ["user"],
+            version = "*",
+        ),
+        "oci-spec": crate.spec(
+            version = "*",
+        ),
+        "opentelemetry": crate.spec(
+            version = "*",
+        ),
+        "opentelemetry-otlp": crate.spec(
+            features = ["metrics"],
+            version = "*",
+        ),
+        "opentelemetry_sdk": crate.spec(
+            features = [
+                "metrics",
+                "rt-tokio",
+            ],
+            version = "*",
+        ),
         "p256": crate.spec(
             default_features = False,
             features = [
@@ -489,12 +556,18 @@ crates_repository(
             default_features = False,
             version = "*",
         ),
+        "procfs": crate.spec(
+            version = "*",
+        ),
         "prost": crate.spec(
             default_features = False,
             features = ["prost-derive"],
             version = "*",
         ),
         "prost-build": crate.spec(
+            version = "*",
+        ),
+        "prost-types": crate.spec(
             version = "*",
         ),
         "rand_core": crate.spec(
@@ -533,6 +606,13 @@ crates_repository(
             features = ["derive"],
             version = "*",
         ),
+        "syslog": crate.spec(
+            version = "*",
+        ),
+        "tar": crate.spec(
+            version = "*",
+        ),
+        "tikv-jemallocator": crate.spec(version = "*"),
         "time": crate.spec(
             default_features = False,
             features = [
@@ -541,8 +621,27 @@ crates_repository(
             ],
             version = "0.3.28",
         ),
+        "tokio": crate.spec(
+            features = [
+                "rt-multi-thread",
+                "macros",
+                "sync",
+                "fs",
+                "process",
+                "net",
+            ],
+            version = "*",
+        ),
+        "tokio-stream": crate.spec(
+            features = ["net"],
+            version = "*",
+        ),
+        "tokio-util": crate.spec(version = "*"),
+        "tonic": crate.spec(version = "*"),
+        "tonic-build": crate.spec(version = "*"),
         "uart_16550": crate.spec(version = "*"),
         "virtio-drivers": crate.spec(version = "*"),
+        "walkdir": crate.spec(version = "*"),
         "x509-cert": crate.spec(
             default_features = False,
             features = ["pem"],
@@ -591,6 +690,16 @@ crates_repository(
         ),
         "bitflags": crate.spec(
             package = "bitflags",
+            version = "*",
+        ),
+        "getrandom": crate.spec(
+            default_features = False,
+            # rdrand is required to support x64_64-unknown-none.
+            features = ["rdrand"],
+            version = "0.2.12",
+        ),
+        "log": crate.spec(
+            features = [],
             version = "*",
         ),
         "x86_64": crate.spec(version = "*"),

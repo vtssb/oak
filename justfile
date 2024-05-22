@@ -5,6 +5,8 @@
 # - https://github.com/casey/just
 # - https://just.systems/man/en/
 
+export BAZEL_CONFIG_FLAG := if env_var_or_default('CI', '') == "" { "" } else { "--config=ci" }
+
 key_xor_test_app: (build_enclave_app "key_xor_test_app")
 oak_echo_enclave_app: (build_enclave_app "oak_echo_enclave_app")
 oak_echo_raw_enclave_app: (build_enclave_app "oak_echo_raw_enclave_app")
@@ -58,14 +60,8 @@ bzimage_provenance_subjects kernel_name output_dir_provenance_subjects bzimage_p
 oak_restricted_kernel_wrapper: oak_restricted_kernel_bin
     just restricted_kernel_bzimage_and_provenance_subjects oak_restricted_kernel
 
-oak_restricted_kernel_simple_io_bin:
-    env --chdir=oak_restricted_kernel_bin cargo build --release --no-default-features --features=simple_io_channel --bin=oak_restricted_kernel_simple_io_bin
-
-oak_restricted_kernel_simple_io_wrapper: oak_restricted_kernel_simple_io_bin
-    just restricted_kernel_bzimage_and_provenance_subjects oak_restricted_kernel_simple_io
-
 oak_restricted_kernel_simple_io_init_rd_bin:
-    env --chdir=oak_restricted_kernel_bin cargo build --release --no-default-features --features=simple_io_channel,initrd --bin=oak_restricted_kernel_simple_io_init_rd_bin
+    env --chdir=oak_restricted_kernel_bin cargo build --release --no-default-features --features=simple_io_channel --bin=oak_restricted_kernel_simple_io_init_rd_bin
 
 oak_restricted_kernel_simple_io_init_rd_wrapper: oak_restricted_kernel_simple_io_init_rd_bin
     just restricted_kernel_bzimage_and_provenance_subjects oak_restricted_kernel_simple_io_init_rd
@@ -92,7 +88,11 @@ oak_containers_kernel:
         oak_containers_kernel/bin/subjects \
         oak_containers_kernel/target/bzImage
 
+oak_containers_launcher:
+    env cargo build --release --package='oak_containers_launcher'
+
 oak_containers_system_image: oak_containers_orchestrator oak_containers_syslogd
+    echo "Using bazel config flag: $BAZEL_CONFIG_FLAG"
     # Copy dependencies into bazel build.
     mkdir --parents oak_containers_system_image/target/image_binaries
     cp --preserve=timestamps \
@@ -102,7 +102,7 @@ oak_containers_system_image: oak_containers_orchestrator oak_containers_syslogd
         oak_containers_syslogd/target/oak_containers_syslogd_patched \
         oak_containers_system_image/target/image_binaries/oak_containers_syslogd
     # Build and compress.
-    bazel build oak_containers_system_image
+    bazel build $BAZEL_CONFIG_FLAG oak_containers_system_image --build_tag_filters=+noci
     cp --preserve=timestamps \
         bazel-bin/oak_containers_system_image/oak_containers_system_image.tar \
         oak_containers_system_image/target/image.tar
@@ -136,7 +136,8 @@ oak_containers_hello_world_container_bundle_tar:
     env --chdir=oak_containers_hello_world_container DOCKER_BUILDKIT=0 bash build_container_bundle
 
 cc_oak_containers_hello_world_container_bundle_tar:
-    env bazel build -c opt //cc/containers/hello_world_trusted_app:bundle.tar
+    echo "Using bazel config flag: $BAZEL_CONFIG_FLAG"
+    env bazel build $BAZEL_CONFIG_FLAG --compilation_mode opt //cc/containers/hello_world_trusted_app:bundle.tar
 
 oak_containers_hello_world_untrusted_app:
     env cargo build --release --package='oak_containers_hello_world_untrusted_app'
@@ -160,33 +161,32 @@ all_ensure_no_std: (ensure_no_std "micro_rpc") (ensure_no_std "oak_attestation_v
 
 # Entry points for Kokoro CI.
 
-kokoro_build_binaries_rust: all_enclave_apps oak_restricted_kernel_bin oak_restricted_kernel_simple_io_bin oak_restricted_kernel_simple_io_wrapper oak_restricted_kernel_simple_io_init_rd_wrapper stage0_bin
+kokoro_build_binaries_rust: all_enclave_apps oak_restricted_kernel_bin oak_restricted_kernel_simple_io_init_rd_wrapper stage0_bin
 
 kokoro_oak_containers: all_oak_containers_binaries oak_functions_containers_container_bundle_tar
-    RUST_LOG="debug" cargo nextest run --all-targets --hide-progress-bar --package='oak_containers_hello_world_untrusted_app'
+    OAK_CONTAINERS_BINARIES_ALREADY_BUILT=1 RUST_LOG="debug" cargo nextest run --all-targets --hide-progress-bar --package='oak_containers_hello_world_untrusted_app'
 
 kokoro_run_tests: all_ensure_no_std
     RUST_LOG="debug" cargo nextest run --all-targets --hide-progress-bar --workspace --exclude='oak_containers_hello_world_untrusted_app'
 
 clang-tidy:
-    bazel build --config=clang-tidy //cc/...
+    bazel build $BAZEL_CONFIG_FLAG --config=clang-tidy //cc/...
 
 bare_metal_crates := "//oak_linux_boot_params //oak_channel //oak_core //oak_virtio //third_party/rust-hypervisor-firmware-virtio"
 
 bazel-ci:
-    # The --noshow_progress and --curses=no prevent a lot of progress bar noise in the CI logs.
-    #
-    # The --show_result leads to all of the built packages being logged at the
-    # end, so we can visually verify that CI tasks are building everythign we want.
-    #
-    # --build_tag_filters=-noci allow us to skip broken/flaky/specialized test
-    # targets during CI builds by adding tags = ["noci"]
-    bazel build --show_result=1000000 --noshow_progress --curses=no --build_tag_filters=-noci -- //...:all
-    bazel test  --noshow_progress --curses=no --build_tag_filters=-noci -- //...:all
-    bazel run oak_proto_rust:verify_generated
+    bazel build --config=unsafe-fast-presubmit -- @jemalloc //...:all
+    bazel test --config=unsafe-fast-presubmit -- //...:all
 
     # Some crates also need to be built for x86_64-unknown-none.
-    bazel build --platforms=//:x86_64-unknown-none --show_result=1000000 --noshow_progress --curses=no --build_tag_filters=-noci -- {{bare_metal_crates}}
+    bazel build --config=unsafe-fast-presubmit --platforms=//:x86_64-unknown-none -- {{bare_metal_crates}}
+
+# Temporary target to help debugging Bazel remote cache with more detailed logs.
+# It should be deleted when debugging is completed.
+# TODO: b/337266665 - Remove bazel-cache-test logic once we are satisfied with remote cache hits.
+bazel-cache-test:
+    mkdir --parents target
+    bazel test --config=unsafe-fast-presubmit --build_event_text_file=./target/bazel_bep_1.txt --execution_log_binary_file=./target/bazel_exec_1.log -- //cc/bazel_cache_test:test
 
 oak_on_prem_cloud_hypervisor:
     env --chdir=oak_on_prem_cloud_hypervisor make

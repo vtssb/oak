@@ -24,13 +24,14 @@ extern crate std;
 use alloc::{format, string::String};
 
 use anyhow::{Context, Result};
+use base64::{prelude::BASE64_STANDARD, Engine as _};
 use oak_proto_rust::oak::{
     attestation::v1::{
         root_layer_data::Report, ApplicationLayerData, ApplicationLayerReferenceValues,
-        KernelLayerData, KernelLayerReferenceValues, OakContainersData,
-        OakContainersReferenceValues, OakRestrictedKernelData, OakRestrictedKernelReferenceValues,
-        ReferenceValues, RootLayerData, RootLayerReferenceValues, SystemLayerData,
-        SystemLayerReferenceValues,
+        ContainerLayerData, ContainerLayerReferenceValues, KernelLayerData,
+        KernelLayerReferenceValues, OakContainersData, OakContainersReferenceValues,
+        OakRestrictedKernelData, OakRestrictedKernelReferenceValues, ReferenceValues,
+        RootLayerData, RootLayerReferenceValues, SystemLayerData, SystemLayerReferenceValues,
     },
     RawDigest,
 };
@@ -38,6 +39,10 @@ use sha2::{Digest, Sha256};
 use zerocopy::{FromBytes, FromZeroes};
 
 use crate::alloc::{borrow::ToOwned, string::ToString};
+
+const AMD_SEV_SNP_TITLE: &str = "AMD SEV-SNP";
+const INTEL_TDX_TITLE: &str = "Intel TDX";
+const INSECURE_TEE_TITLE: &str = "FAKE INSECURE";
 
 /// Provides human readable explanations for attestation data.
 pub trait HumanReadableTitle {
@@ -52,9 +57,9 @@ pub trait HumanReadableExplanation {
 }
 
 // Adapt the JSON mapping of reference values to make it human readable.
-fn make_reference_value_json_human_readable(value: &mut serde_json::Value) {
-    fn modify_node(value: &mut serde_json::Value) {
-        if let serde_json::Value::Object(map) = value {
+fn make_reference_values_human_readable(value: &mut serde_yaml::Value) {
+    fn modify_node(value: &mut serde_yaml::Value) {
+        if let serde_yaml::Value::Mapping(map) = value {
             // Some referene values are nested under a value key. Remove
             // for human readability.
             if map.len() == 1
@@ -68,37 +73,39 @@ fn make_reference_value_json_human_readable(value: &mut serde_json::Value) {
             // Simplify by rmeoving the first nesting.
             if map.len() == 1
                 && let Some(digests) = map.get_mut("digests")
-                && matches!(digests, serde_json::Value::Object(_))
+                && matches!(digests, serde_yaml::Value::Mapping(_))
             {
                 *value = digests.clone();
                 return;
             }
 
             // Print digest hashes with hex encoding.
-            if serde_json::from_value::<RawDigest>(serde_json::Value::Object(map.clone())).is_ok() {
+            if serde_yaml::from_value::<RawDigest>(serde_yaml::Value::Mapping(map.clone())).is_ok()
+            {
                 map.iter_mut().for_each(|(_key, hash_value)| {
                     // The proto3 JSON mapping spec uses base64 encoding.
                     let base64_encoded_hash =
                         hash_value.as_str().expect("validated as string in prior conditional");
-                    let hash =
-                        base64::decode(base64_encoded_hash).expect("invalid base64 digest hash");
-                    *hash_value = serde_json::Value::String(hex::encode(hash));
+                    let hash = BASE64_STANDARD
+                        .decode(base64_encoded_hash)
+                        .expect("invalid base64 digest hash");
+                    *hash_value = serde_yaml::Value::String(hex::encode(hash));
                 })
             };
         }
     }
 
     // Performs operation on every node in a potentially nested JSON tree.
-    fn for_each_node<F>(value: &mut serde_json::Value, operator: &F)
+    fn for_each_node<F>(value: &mut serde_yaml::Value, operator: &F)
     where
-        F: Fn(&mut serde_json::Value),
+        F: Fn(&mut serde_yaml::Value),
     {
         operator(value);
         match value {
-            serde_json::Value::Object(map) => {
+            serde_yaml::Value::Mapping(map) => {
                 map.iter_mut().for_each(|(_, v)| for_each_node(v, operator))
             }
-            serde_json::Value::Array(arr) => {
+            serde_yaml::Value::Sequence(arr) => {
                 arr.iter_mut().for_each(|v| for_each_node(v, operator))
             }
             _ => {}
@@ -110,11 +117,33 @@ fn make_reference_value_json_human_readable(value: &mut serde_json::Value) {
     for_each_node(value, &modify_node);
 }
 
-fn get_tee_name(tee_report: &Report) -> &'static str {
-    match tee_report {
-        Report::SevSnp(_) => "AMD SEV-SNP",
-        Report::Tdx(_) => "Intel TDX",
-        Report::Fake(_) => "UNSAFE FAKE",
+fn get_tee_name_from_root_layer_evidence(
+    root_layer: &RootLayerData,
+) -> Result<&'static str, anyhow::Error> {
+    match root_layer.report.as_ref().context("unexpectedly unset report proto field")? {
+        Report::SevSnp(_) => Ok(AMD_SEV_SNP_TITLE),
+        Report::Tdx(_) => Ok(INTEL_TDX_TITLE),
+        Report::Fake(_) => Ok(INSECURE_TEE_TITLE),
+    }
+}
+
+fn get_tee_name_from_root_layer_reference_values(
+    root_layer_reference_values: &RootLayerReferenceValues,
+) -> Result<String, anyhow::Error> {
+    match root_layer_reference_values {
+        RootLayerReferenceValues { insecure: Some(_), .. } => Ok(INSECURE_TEE_TITLE.to_owned()),
+        RootLayerReferenceValues { amd_sev: Some(_), intel_tdx: Some(_), insecure: None } => {
+            Ok(format!("{} or {}", AMD_SEV_SNP_TITLE, INTEL_TDX_TITLE))
+        }
+        RootLayerReferenceValues { amd_sev: None, intel_tdx: Some(_), insecure: None } => {
+            Ok(INTEL_TDX_TITLE.to_owned())
+        }
+        RootLayerReferenceValues { amd_sev: Some(_), intel_tdx: None, insecure: None } => {
+            Ok(AMD_SEV_SNP_TITLE.to_owned())
+        }
+        RootLayerReferenceValues { amd_sev: None, intel_tdx: None, insecure: None } => {
+            Err(anyhow::Error::msg("no TEE value found in the reference values"))
+        }
     }
 }
 
@@ -136,49 +165,45 @@ impl HumanReadableTitle for ReferenceValues {
 
 impl HumanReadableExplanation for ReferenceValues {
     fn description(&self) -> Result<String, anyhow::Error> {
-        let mut json_representation = serde_json::to_value(self).map_err(anyhow::Error::msg)?;
-        make_reference_value_json_human_readable(&mut json_representation);
-        serde_json::to_string_pretty(&json_representation).map_err(anyhow::Error::msg)
+        let mut json_representation = serde_yaml::to_value(self).map_err(anyhow::Error::msg)?;
+        make_reference_values_human_readable(&mut json_representation);
+        serde_yaml::to_string(&json_representation).map_err(anyhow::Error::msg)
     }
 }
 
 impl HumanReadableTitle for OakRestrictedKernelData {
     fn title(&self) -> Result<String, anyhow::Error> {
-        let tee_report = self
-            .root_layer
-            .as_ref()
-            .context("unexpectedly unset root_layer proto field")?
-            .report
-            .as_ref()
-            .context("unexpectedly unset report proto field")?;
-        let tee_name = get_tee_name(tee_report);
+        let root_layer =
+            self.root_layer.clone().context("unexpectedly unset root_layer proto field")?;
+        let tee_name = get_tee_name_from_root_layer_evidence(&root_layer)?;
         Ok(format!("Oak Restricted Kernel Stack in a {} TEE", tee_name))
     }
 }
 
 impl HumanReadableTitle for OakRestrictedKernelReferenceValues {
     fn title(&self) -> Result<String, anyhow::Error> {
-        Ok("Oak Restricted Kernel Stack".to_owned())
+        let root_layer =
+            self.root_layer.as_ref().context("unexpectedly unset root_layer proto field")?;
+        let tee_name = get_tee_name_from_root_layer_reference_values(root_layer)?;
+        Ok(format!("Oak Restricted Kernel Stack in a {} TEE", tee_name))
     }
 }
 
 impl HumanReadableTitle for OakContainersData {
     fn title(&self) -> Result<String, anyhow::Error> {
-        let tee_report = self
-            .root_layer
-            .clone()
-            .context("unexpectedly unset root_layer proto field")?
-            .report
-            .clone()
-            .context("unexpectedly unset report proto field")?;
-        let tee_name = get_tee_name(&tee_report);
-        Ok(format!("Evidence of the Oak Conatiners Stack in a {} TEE", tee_name))
+        let root_layer =
+            self.root_layer.clone().context("unexpectedly unset root_layer proto field")?;
+        let tee_name = get_tee_name_from_root_layer_evidence(&root_layer)?;
+        Ok(format!("Oak Containers Stack in a {} TEE", tee_name))
     }
 }
 
 impl HumanReadableTitle for OakContainersReferenceValues {
     fn title(&self) -> Result<String, anyhow::Error> {
-        Ok("Oak Conatiners Stack".to_owned())
+        let root_layer =
+            self.root_layer.as_ref().context("unexpectedly unset root_layer proto field")?;
+        let tee_name = get_tee_name_from_root_layer_reference_values(root_layer)?;
+        Ok(format!("Oak Containers Stack in a {} TEE", tee_name))
     }
 }
 
@@ -218,9 +243,9 @@ impl HumanReadableTitle for RootLayerReferenceValues {
 
 impl HumanReadableExplanation for RootLayerReferenceValues {
     fn description(&self) -> Result<String, anyhow::Error> {
-        let mut json_representation = serde_json::to_value(self).map_err(anyhow::Error::msg)?;
-        make_reference_value_json_human_readable(&mut json_representation);
-        serde_json::to_string_pretty(&json_representation).map_err(anyhow::Error::msg)
+        let mut json_representation = serde_yaml::to_value(self).map_err(anyhow::Error::msg)?;
+        make_reference_values_human_readable(&mut json_representation);
+        serde_yaml::to_string(&json_representation).map_err(anyhow::Error::msg)
     }
 }
 
@@ -290,9 +315,9 @@ impl HumanReadableTitle for KernelLayerReferenceValues {
 
 impl HumanReadableExplanation for KernelLayerReferenceValues {
     fn description(&self) -> Result<String, anyhow::Error> {
-        let mut json_representation = serde_json::to_value(self).map_err(anyhow::Error::msg)?;
-        make_reference_value_json_human_readable(&mut json_representation);
-        serde_json::to_string_pretty(&json_representation).map_err(anyhow::Error::msg)
+        let mut json_representation = serde_yaml::to_value(self).map_err(anyhow::Error::msg)?;
+        make_reference_values_human_readable(&mut json_representation);
+        serde_yaml::to_string(&json_representation).map_err(anyhow::Error::msg)
     }
 }
 
@@ -328,9 +353,9 @@ impl HumanReadableTitle for SystemLayerReferenceValues {
 
 impl HumanReadableExplanation for SystemLayerReferenceValues {
     fn description(&self) -> Result<String, anyhow::Error> {
-        let mut json_representation = serde_json::to_value(self).map_err(anyhow::Error::msg)?;
-        make_reference_value_json_human_readable(&mut json_representation);
-        serde_json::to_string_pretty(&json_representation).map_err(anyhow::Error::msg)
+        let mut json_representation = serde_yaml::to_value(self).map_err(anyhow::Error::msg)?;
+        make_reference_values_human_readable(&mut json_representation);
+        serde_yaml::to_string(&json_representation).map_err(anyhow::Error::msg)
     }
 }
 
@@ -387,9 +412,57 @@ impl HumanReadableTitle for ApplicationLayerReferenceValues {
 
 impl HumanReadableExplanation for ApplicationLayerReferenceValues {
     fn description(&self) -> Result<String, anyhow::Error> {
-        let mut json_representation = serde_json::to_value(self).map_err(anyhow::Error::msg)?;
-        make_reference_value_json_human_readable(&mut json_representation);
-        serde_json::to_string_pretty(&json_representation).map_err(anyhow::Error::msg)
+        let mut json_representation = serde_yaml::to_value(self).map_err(anyhow::Error::msg)?;
+        make_reference_values_human_readable(&mut json_representation);
+        serde_yaml::to_string(&json_representation).map_err(anyhow::Error::msg)
+    }
+}
+
+impl HumanReadableTitle for ContainerLayerData {
+    fn title(&self) -> Result<String, anyhow::Error> {
+        Ok("Container Layer".to_string())
+    }
+}
+
+impl HumanReadableExplanation for ContainerLayerData {
+    fn description(&self) -> Result<String, anyhow::Error> {
+        let digests = {
+            let bundle_digest =
+                self.bundle.as_ref().context("unexpectedly unset binary proto field").and_then(
+                    |digest| ArtifactDigestSha2_256::try_from(digest).map_err(anyhow::Error::from),
+                )?;
+
+            if let Ok(config_digest) =
+                self.config.as_ref().context("unexpectedly unset config proto field").and_then(
+                    |digest| ArtifactDigestSha2_256::try_from(digest).map_err(anyhow::Error::from),
+                )
+            {
+                format!(
+                    "Container Bundle [Digest]: {}
+Config [Digest]: {}",
+                    bundle_digest.display_hash(),
+                    config_digest.display_hash(),
+                )
+            } else {
+                format!("Container Bundle [Digest]: {}", bundle_digest.display_hash(),)
+            }
+        };
+
+        Ok(digests)
+    }
+}
+
+impl HumanReadableTitle for ContainerLayerReferenceValues {
+    fn title(&self) -> Result<String, anyhow::Error> {
+        Ok("Container Layer".to_string())
+    }
+}
+
+impl HumanReadableExplanation for ContainerLayerReferenceValues {
+    fn description(&self) -> Result<String, anyhow::Error> {
+        let mut json_representation = serde_yaml::to_value(self).map_err(anyhow::Error::msg)?;
+        make_reference_values_human_readable(&mut json_representation);
+        serde_yaml::to_string(&json_representation).map_err(anyhow::Error::msg)
     }
 }
 

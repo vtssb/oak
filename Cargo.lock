@@ -343,6 +343,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2322,14 +2328,14 @@ name = "oak_attestation_explain"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.13.1",
+ "base64 0.22.1",
  "hex",
  "oak_attestation_verification",
  "oak_attestation_verification_test_utils",
  "oak_proto_rust",
  "prost",
  "serde",
- "serde_json",
+ "serde_yaml",
  "sha2",
  "zerocopy",
 ]
@@ -2343,6 +2349,7 @@ dependencies = [
  "hex",
  "oak_attestation_explain",
  "oak_attestation_verification",
+ "oak_attestation_verification_test_utils",
  "oak_proto_rust",
  "prost",
  "sha2",
@@ -2607,6 +2614,7 @@ dependencies = [
 name = "oak_crypto"
 version = "0.1.0"
 dependencies = [
+ "aead",
  "aes-gcm",
  "anyhow",
  "async-trait",
