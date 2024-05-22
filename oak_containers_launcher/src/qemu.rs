@@ -169,6 +169,9 @@ impl Qemu {
                 "hostfwd=tcp:{host_address}:{host_proxy_port}-{vm_address}:{vm_port}"
             ));
         };
+        netdev_rules.push(format!(
+            "hostfwd=tcp:{host_address}:50051-{vm_address}:50051"
+        ));
         cmd.args(["-netdev", netdev_rules.join(",").as_str()]);
         cmd.args(["-device", "virtio-net,netdev=netdev,rombar=0"]);
         if let Some(virtio_guest_cid) = params.virtio_guest_cid {
