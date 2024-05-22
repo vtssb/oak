@@ -54,10 +54,11 @@
               patch = ./oak_containers_kernel/patches/virtio-dma.patch;
             }];
           };
-          cloud_hypervisor_commit_hash = "85a3623b4473f5dcd3cc185a388f4aef07e43e56";
+          cloud_hypervisor_version = "v39.0";
+          cloud_hypervisor_tarxz = "cloud-hypervisor-${cloud_hypervisor_version}.tar.xz";
           cloud_hypervisor_src = builtins.fetchurl {
-            url = "https://github.com/cloud-hypervisor/cloud-hypervisor/archive/${cloud_hypervisor_commit_hash}.tar.gz";
-            sha256 = "1axbxb3sh51s22ygfxklsnsgq7nmpw00wkg6b3ccqdvj1qk76ba8";
+            url = "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${cloud_hypervisor_version}/${cloud_hypervisor_tarxz}";
+            sha256 = "0z0zfh7awjwpk82scdk40mrjyyk5qkr22id90qsj81piih7698a7";
           };
           oak_on_prem_cloud_hypervisor = pkgs.stdenv.mkDerivation {
             name = "oak_on_prem_cloud_hypervisor";
@@ -239,7 +240,7 @@
             oak_on_prem = with pkgs; mkShell {
               shellHook = ''
 	        export CLOUD_HYPERVISOR_SRC_TAR="${cloud_hypervisor_src}"
-	        export CLOUD_HYPERVISOR_COMMIT_HASH="${cloud_hypervisor_commit_hash}"
+	        export CLOUD_HYPERVISOR_VER="${cloud_hypervisor_version}"
               '';
               inputsFrom = [
 	        containers
