@@ -107,6 +107,12 @@ impl ZeroPage {
         // correctly by the kernel.
         let dest = &mut self.inner.hdr.as_bytes_mut()[..src.len()];
         dest.copy_from_slice(src);
+        // When SEV-SNP is enabled, the kernel finds type_of_loader empty,
+        // and cannot start loading stage1 into memory. This is weird. But by
+        // setting it here we can temporarily bypass the type_of_loader check
+        // and make the system boot.
+        // TODO: remove this line and solve the problem fundamentally.
+        self.inner.hdr.type_of_loader = 0xFF;
         Some(measurement)
     }
 
