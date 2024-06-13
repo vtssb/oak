@@ -14,10 +14,15 @@
 // limitations under the License.
 //
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     micro_rpc_build::compile(
         &["../proto/micro_rpc/messages.proto"],
         &["../proto"],
         Default::default(),
     );
+
+    #[cfg(feature = "bazel")]
+    oak_proto_build_utils::fix_prost_derives()?;
+
+    Ok(())
 }

@@ -672,9 +672,9 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
 name = "coset"
-version = "0.3.6"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c7f688ee58418b8614848a05bf392cc622f92451e79998c131b9d22c91abd9"
+checksum = "ff8aad850c1f86daa47e812913051eb5a26c4d9fb4242a89178bf99b946e4e3c"
 dependencies = [
  "ciborium",
  "ciborium-io",
@@ -1932,9 +1932,9 @@ checksum = "884e2677b40cc8c339eaefcb701c32ef1fd2493d71118dc0ca4b6a736c93bd67"
 
 [[package]]
 name = "libc"
-version = "0.2.152"
+version = "0.2.155"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13e3bf6590cbc649f4d1a3eefc9d5d6eb746f5200ffb04e5e142700b8faa56e7"
+checksum = "97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c"
 
 [[package]]
 name = "libloading"
@@ -2428,6 +2428,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_containers_agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "oak_grpc_utils",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "procfs",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "oak_containers_hello_world_trusted_app"
 version = "0.1.0"
 dependencies = [
@@ -2480,6 +2495,7 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "nix 0.27.1",
  "oak_attestation",
  "oak_crypto",
  "oak_grpc_utils",
@@ -2516,7 +2532,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "p256",
- "procfs",
  "prost",
  "prost-types",
  "rand_core",
@@ -2574,6 +2589,7 @@ dependencies = [
  "sha2",
  "tar",
  "tokio",
+ "tokio-vsock",
  "tonic",
  "tower",
  "x86_64",
@@ -3026,8 +3042,10 @@ dependencies = [
  "micro_rpc_build",
  "pbjson",
  "pbjson-build",
+ "pbjson-types",
  "prost",
  "prost-build",
+ "prost-types",
  "serde",
 ]
 
@@ -3148,12 +3166,16 @@ name = "oak_restricted_kernel_sdk_proc_macro"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 2.0.48",
+ "syn 1.0.109",
 ]
 
 [[package]]
 name = "oak_session"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "oak_proto_rust",
+]
 
 [[package]]
 name = "oak_sev_guest"
@@ -3203,10 +3225,12 @@ dependencies = [
  "oak_core",
  "oak_dice",
  "oak_linux_boot_params",
+ "oak_proto_rust",
  "oak_sev_guest",
  "oak_sev_snp_attestation_report",
  "oak_stage0_dice",
  "p256",
+ "prost",
  "rand_core",
  "sev_serial",
  "sha2",
@@ -3496,6 +3520,21 @@ dependencies = [
  "itertools 0.11.0",
  "prost",
  "prost-types",
+]
+
+[[package]]
+name = "pbjson-types"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18f596653ba4ac51bdecbb4ef6773bc7f56042dc13927910de1684ad3d32aa12"
+dependencies = [
+ "bytes",
+ "chrono",
+ "pbjson",
+ "pbjson-build",
+ "prost",
+ "prost-build",
+ "serde",
 ]
 
 [[package]]
@@ -3807,7 +3846,7 @@ checksum = "c55e02e35260070b6f716a2423c2ff1c3bb1642ddca6f99e1f26d06268a0e2d2"
 dependencies = [
  "bytes",
  "heck",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "multimap",
  "once_cell",
@@ -4113,9 +4152,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.30"
+version = "0.38.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "322394588aaf33c24007e8bb3238ee3e4c5c09c084ab32bc73890b99ff326bca"
+checksum = "70dc5ec042f7a43c4a73241207cecc9873a06d45debb38b329f8541d85c2730f"
 dependencies = [
  "bitflags 2.4.1",
  "errno",
@@ -4719,13 +4758,12 @@ checksum = "69758bda2e78f098e4ccb393021a0963bb3442eac05f135c30f61b7370bbafae"
 
 [[package]]
 name = "tempfile"
-version = "3.9.0"
+version = "3.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01ce4141aa927a6d1bd34a041795abd0db1cccba5d5f24b009f694bdf3a1f3fa"
+checksum = "85b77fafb263dd9d05cbeac119526425676db3784113aa9295c88498cbf8bff1"
 dependencies = [
  "cfg-if",
  "fastrand",
- "redox_syscall",
  "rustix",
  "windows-sys 0.52.0",
 ]
@@ -6013,12 +6051,10 @@ dependencies = [
  "colored",
  "itertools 0.12.1",
  "nix 0.27.1",
- "oak_functions_test_utils",
  "once_cell",
  "portpicker",
  "regex",
  "serde",
- "serde_yaml",
  "strum 0.24.1",
  "strum_macros",
  "tokio",

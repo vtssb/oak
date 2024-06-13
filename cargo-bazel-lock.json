@@ -1,5 +1,5 @@
 {
-  "checksum": "452f3d48019e281e163f2eedbe30f2a65c93d237850779ef9383209df1373d78",
+  "checksum": "9872a2c4b34b30e31ccb5db846832f1a2642beec9fa9266f82f20c3db29bbf54",
   "crates": {
     "acpi 5.0.0": {
       "name": "acpi",
@@ -4380,6 +4380,10 @@
               "target": "ecdsa"
             },
             {
+              "id": "futures-util 0.3.30",
+              "target": "futures_util"
+            },
+            {
               "id": "getrandom 0.2.12",
               "target": "getrandom"
             },
@@ -4548,6 +4552,10 @@
               "target": "tonic_build"
             },
             {
+              "id": "tower 0.4.13",
+              "target": "tower"
+            },
+            {
               "id": "uart_16550 0.3.0",
               "target": "uart_16550"
             },
@@ -4584,6 +4592,10 @@
             {
               "id": "async-trait 0.1.79",
               "target": "async_trait"
+            },
+            {
+              "id": "prost-derive 0.12.4",
+              "target": "prost_derive"
             }
           ],
           "selects": {}
@@ -5800,6 +5812,7 @@
             "alloc",
             "async-await",
             "async-await-macro",
+            "default",
             "futures-macro",
             "futures-sink",
             "sink",
@@ -13669,15 +13682,6 @@
         "compile_data_glob": [
           "**"
         ],
-        "crate_features": {
-          "common": [
-            "default",
-            "rust_1_61",
-            "rust_1_65",
-            "std"
-          ],
-          "selects": {}
-        },
         "edition": "2018",
         "proc_macro_deps": {
           "common": [
@@ -13726,12 +13730,6 @@
         "compile_data_glob": [
           "**"
         ],
-        "crate_features": {
-          "common": [
-            "rust_1_61"
-          ],
-          "selects": {}
-        },
         "deps": {
           "common": [
             {
@@ -15768,12 +15766,14 @@
             "__common",
             "balance",
             "buffer",
+            "default",
             "discover",
             "futures-core",
             "futures-util",
             "indexmap",
             "limit",
             "load",
+            "log",
             "make",
             "pin-project",
             "pin-project-lite",
@@ -15959,6 +15959,7 @@
           "common": [
             "attributes",
             "default",
+            "log",
             "std",
             "tracing-attributes"
           ],
@@ -15966,6 +15967,10 @@
         },
         "deps": {
           "common": [
+            {
+              "id": "log 0.4.21",
+              "target": "log"
+            },
             {
               "id": "pin-project-lite 0.2.14",
               "target": "pin_project_lite"
@@ -19318,6 +19323,7 @@
     "coset 0.3.7",
     "curve25519-dalek 4.1.1",
     "ecdsa 0.16.9",
+    "futures-util 0.3.30",
     "getrandom 0.2.12",
     "goblin 0.8.0",
     "hex 0.4.3",
@@ -19339,6 +19345,7 @@
     "procfs 0.16.0",
     "prost 0.12.4",
     "prost-build 0.12.3",
+    "prost-derive 0.12.4",
     "prost-types 0.12.3",
     "rand_core 0.6.4",
     "regex 1.10.4",
@@ -19360,6 +19367,7 @@
     "tokio-util 0.7.11",
     "tonic 0.11.0",
     "tonic-build 0.11.0",
+    "tower 0.4.13",
     "uart_16550 0.3.0",
     "virtio-drivers 0.7.1",
     "walkdir 2.5.0",

@@ -25,21 +25,22 @@
               allowUnfree = true; # needed to get android stuff to compile
             };
           };
-          linux_kernel_version = "6.1.84";
+          linux_kernel_version = "6.9.1";
           linux_kernel_src = builtins.fetchurl {
             url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${linux_kernel_version}.tar.xz";
-            sha256 = "0ykhl4i6yhryzgjkdbdz4pd3b1ghv84h6mpn7bdx0ra7w7mx55xg";
+            sha256 = "01b414ba98fd189ecd544435caf3860ae2a790e3ec48f5aa70fdf42dc4c5c04a";
           };
           # Build the linux kernel for Oak Containers as a nix package, which simplifies
           # reproducibility.
           # Note that building a package via nix is not by itself a guarantee of
           # reproducibility; see https://reproducible.nixos.org.
-          linux_kernel = pkgs.linuxManualConfig {
+          # Common kernel configuration
+          commonLinuxKernelConfig = {
             # To allow reproducibility, the following options need to be configured:
             # - CONFIG_MODULE_SIG is not set
             # - CONFIG_MODULE_SIG_ALL is not set
             # - CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT is not set
-            configfile = ./oak_containers_kernel/configs/6.1.84/minimal.config;
+            configfile = ./oak_containers_kernel/configs/6.9.1/minimal.config;
             # And also the following build variables.
             # See https://docs.kernel.org/kbuild/reproducible-builds.html.
             extraMakeFlags = [
@@ -49,11 +50,16 @@
             version = linux_kernel_version;
             src = linux_kernel_src;
             allowImportFromDerivation = true;
+          };
+          # Patched kernel
+          linux_kernel = pkgs.linuxManualConfig (commonLinuxKernelConfig // {
             kernelPatches = [{
               name = "virtio-dma";
               patch = ./oak_containers_kernel/patches/virtio-dma.patch;
             }];
-          };
+          });
+          # Vanilla kernel
+          vanilla_linux_kernel = pkgs.linuxManualConfig commonLinuxKernelConfig;
           cloud_hypervisor_version = "v39.0";
           cloud_hypervisor_tarxz = "cloud-hypervisor-${cloud_hypervisor_version}.tar.xz";
           cloud_hypervisor_src = builtins.fetchurl {
@@ -127,7 +133,7 @@
           };
         in
         {
-          packages = { inherit linux_kernel; };
+          packages = { inherit linux_kernel; inherit vanilla_linux_kernel; };
           formatter = pkgs.nixpkgs-fmt;
           # We define a recursive set of shells, so that we can easily create a shell with a subset
           # of the dependencies for specific CI steps, without having to pull everything all the time.
@@ -210,6 +216,7 @@
             containers = with pkgs; mkShell {
               shellHook = ''
                 export LINUX_KERNEL="${linux_kernel}"
+                export VANILLA_LINUX_KERNEL="${vanilla_linux_kernel}"
               '';
               inputsFrom = [
                 base
@@ -256,6 +263,7 @@
             bzImageProvenance = with pkgs; mkShell {
               shellHook = ''
                 export LINUX_KERNEL="${linux_kernel}"
+                export VANILLA_LINUX_KERNEL="${vanilla_linux_kernel}"
               '';
               inputsFrom = [
                 rust

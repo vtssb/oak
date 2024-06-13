@@ -40,22 +40,18 @@ restricted_kernel_bzimage_and_provenance_subjects kernel_bin_prefix:
         oak_restricted_kernel_wrapper/target/x86_64-unknown-none/release/{{kernel_bin_prefix}}_wrapper_bin
     just bzimage_provenance_subjects \
         {{kernel_bin_prefix}} \
-        ./oak_restricted_kernel_wrapper/bin/{{kernel_bin_prefix}}/subjects \
-        oak_restricted_kernel_wrapper/target/x86_64-unknown-none/release/{{kernel_bin_prefix}}_wrapper_bin
+        oak_restricted_kernel_wrapper/target/x86_64-unknown-none/release/{{kernel_bin_prefix}}_wrapper_bin \
+        oak_restricted_kernel_wrapper/bin/{{kernel_bin_prefix}}/subjects
 
 # Create provenance subjects for a kernel bzImage, by extracting the setup data
-# and image from it. Places them alongside the bzImage in the output directory.
-bzimage_provenance_subjects kernel_name output_dir_provenance_subjects bzimage_path:
-    rm --recursive --force {{output_dir_provenance_subjects}}
-    mkdir --parents {{output_dir_provenance_subjects}}
+# and image to the output directory.
+bzimage_provenance_subjects kernel_name bzimage_path output_dir:
+    rm --recursive --force {{output_dir}}
+    mkdir --parents {{output_dir}}
     cargo run --package=oak_kernel_measurement -- \
         --kernel={{bzimage_path}} \
-        --kernel-setup-data-output="{{output_dir_provenance_subjects}}/{{kernel_name}}_setup_data" \
-        --kernel-image-output="{{output_dir_provenance_subjects}}/{{kernel_name}}_image"
-    cp \
-        --preserve=timestamps \
-        {{bzimage_path}} \
-        {{output_dir_provenance_subjects}}/{{kernel_name}}_bzimage
+        --kernel-setup-data-output="{{output_dir}}/{{kernel_name}}_setup_data" \
+        --kernel-image-output="{{output_dir}}/{{kernel_name}}_image"
 
 oak_restricted_kernel_wrapper: oak_restricted_kernel_bin
     just restricted_kernel_bzimage_and_provenance_subjects oak_restricted_kernel
@@ -66,17 +62,28 @@ oak_restricted_kernel_simple_io_init_rd_bin:
 oak_restricted_kernel_simple_io_init_rd_wrapper: oak_restricted_kernel_simple_io_init_rd_bin
     just restricted_kernel_bzimage_and_provenance_subjects oak_restricted_kernel_simple_io_init_rd
 
-stage0_bin output_bin_path="stage0_bin/target/x86_64-unknown-none/release/stage0_bin":
-    env --chdir=stage0_bin cargo objcopy --release -- --output-target=binary ../{{output_bin_path}}
+oak_client_android_app:
+    bazel build --config=unsafe-fast-presubmit --compilation_mode opt \
+        //java/src/main/java/com/google/oak/client/android:client_app
+    # Copy out to a directory which does not change with bazel config and does
+    # not interfere with cargo. It should be reused for other targets as well.
+    mkdir --parents generated
+    cp --preserve=timestamps --no-preserve=mode \
+        bazel-bin/java/src/main/java/com/google/oak/client/android/client_app.apk \
+        generated
 
-stage0_provenance_subjects vcpu_count="1,2,4,8,16,32,64" provenance_subjects_dir="stage0_bin/bin/subjects":
-    rm --recursive --force {{provenance_subjects_dir}}
-    mkdir -p {{provenance_subjects_dir}}
-    just stage0_bin {{provenance_subjects_dir}}/stage0_bin
+stage0_bin:
+    env --chdir=stage0_bin \
+        cargo objcopy --release -- --output-target=binary \
+        target/x86_64-unknown-none/release/stage0_bin
+
+stage0_provenance_subjects output_dir="stage0_bin/bin/subjects": stage0_bin
+    rm --recursive --force {{output_dir}}
+    mkdir --parents {{output_dir}}
     cargo run --package=snp_measurement --quiet -- \
-        --vcpu-count={{vcpu_count}} \
-        --stage0-rom={{provenance_subjects_dir}}/stage0_bin \
-        --attestation-measurements-output-dir={{provenance_subjects_dir}}
+        --vcpu-count=1,2,4,8,16,32,64 \
+        --stage0-rom=stage0_bin/target/x86_64-unknown-none/release/stage0_bin \
+        --attestation-measurements-output-dir={{output_dir}}
 
 stage1_cpio:
     env --chdir=oak_containers_stage1 make
@@ -85,13 +92,13 @@ oak_containers_kernel:
     env --chdir=oak_containers_kernel make
     just bzimage_provenance_subjects \
         oak_containers_kernel \
-        oak_containers_kernel/bin/subjects \
-        oak_containers_kernel/target/bzImage
+        oak_containers_kernel/target/bzImage \
+        oak_containers_kernel/bin/subjects
 
 oak_containers_launcher:
     env cargo build --release --package='oak_containers_launcher'
 
-oak_containers_system_image: oak_containers_orchestrator oak_containers_syslogd
+oak_containers_system_image: oak_containers_agent oak_containers_orchestrator oak_containers_syslogd
     echo "Using bazel config flag: $BAZEL_CONFIG_FLAG"
     # Copy dependencies into bazel build.
     mkdir --parents oak_containers_system_image/target/image_binaries
@@ -101,12 +108,22 @@ oak_containers_system_image: oak_containers_orchestrator oak_containers_syslogd
     cp --preserve=timestamps \
         oak_containers_syslogd/target/oak_containers_syslogd_patched \
         oak_containers_system_image/target/image_binaries/oak_containers_syslogd
+    cp --preserve=timestamps \
+        oak_containers_agent/target/oak_containers_agent_patched \
+        oak_containers_system_image/target/image_binaries/oak_containers_agent
     # Build and compress.
     bazel build $BAZEL_CONFIG_FLAG oak_containers_system_image --build_tag_filters=+noci
     cp --preserve=timestamps \
         bazel-bin/oak_containers_system_image/oak_containers_system_image.tar \
         oak_containers_system_image/target/image.tar
     xz --force oak_containers_system_image/target/image.tar
+
+oak_containers_nvidia_system_image: oak_containers_system_image
+    bazel build $BAZEL_CONFIG_FLAG oak_containers_system_image:oak_containers_nvidia_system_image --build_tag_filters=+noci
+    cp --preserve=timestamps \
+        bazel-bin/oak_containers_system_image/oak_containers_nvidia_system_image.tar \
+        oak_containers_system_image/target/nvidia_image.tar
+    xz --force oak_containers_system_image/target/nvidia_image.tar
 
 oak_containers_orchestrator:
     env --chdir=oak_containers_orchestrator \
@@ -123,6 +140,17 @@ oak_containers_syslogd:
         oak_containers_syslogd/target/oak_containers_syslogd_patched
     patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --set-rpath "" \
         oak_containers_syslogd/target/oak_containers_syslogd_patched
+
+oak_containers_agent:
+    env --chdir=oak_containers_agent \
+        cargo build --release -Z unstable-options --out-dir=target
+    # We can't patch the binary in-place, as that would confuse cargo.
+    # Therefore we copy it to a new location and patch there.
+    cp \
+        oak_containers_agent/target/oak_containers_agent \
+        oak_containers_agent/target/oak_containers_agent_patched
+    patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --set-rpath "" \
+        oak_containers_agent/target/oak_containers_agent_patched
 
 # Profile the Wasm execution and generate a flamegraph.
 profile_wasm:
@@ -161,7 +189,9 @@ all_ensure_no_std: (ensure_no_std "micro_rpc") (ensure_no_std "oak_attestation_v
 
 # Entry points for Kokoro CI.
 
-kokoro_build_binaries_rust: all_enclave_apps oak_restricted_kernel_bin oak_restricted_kernel_simple_io_init_rd_wrapper stage0_bin
+kokoro_build_binaries_rust: all_enclave_apps oak_restricted_kernel_bin \
+    oak_restricted_kernel_simple_io_init_rd_wrapper stage0_bin \
+    oak_client_android_app
 
 kokoro_oak_containers: all_oak_containers_binaries oak_functions_containers_container_bundle_tar
     OAK_CONTAINERS_BINARIES_ALREADY_BUILT=1 RUST_LOG="debug" cargo nextest run --all-targets --hide-progress-bar --package='oak_containers_hello_world_untrusted_app'
@@ -172,14 +202,32 @@ kokoro_run_tests: all_ensure_no_std
 clang-tidy:
     bazel build $BAZEL_CONFIG_FLAG --config=clang-tidy //cc/...
 
-bare_metal_crates := "//oak_linux_boot_params //oak_channel //oak_core //oak_virtio //third_party/rust-hypervisor-firmware-virtio"
+# TODO: b/343228114 - Use a Bazel tag instead of listing packages here.
+bare_metal_crates := "//oak_linux_boot_params //oak_channel //oak_core //oak_virtio //third_party/rust-hypervisor-firmware-virtio //micro_rpc //oak_proto_rust //oak_sev_snp_attestation_report //oak_sev_guest //sev_serial //oak_crypto"
 
 bazel-ci:
-    bazel build --config=unsafe-fast-presubmit -- @jemalloc //...:all
-    bazel test --config=unsafe-fast-presubmit -- //...:all
+    # Test Oak as a dependency in the test workspace
+    # Some dependencies aren't properly exposed yet, so just testing a subset of targets
+    cd bazel/test_workspace && bazel build --config=unsafe-fast-presubmit @oak2//micro_rpc @oak2//oak_grpc_utils @oak2//oak_proto_rust
+
+    bazel build --config=unsafe-fast-presubmit -- //...:all
+    bazel test --config=unsafe-fast-presubmit --test_output=errors -- //...:all
 
     # Some crates also need to be built for x86_64-unknown-none.
     bazel build --config=unsafe-fast-presubmit --platforms=//:x86_64-unknown-none -- {{bare_metal_crates}}
+
+
+bazel-clippy:
+    bazel build --config=clippy --config=unsafe-fast-presubmit //...:all -- -third_party/...
+
+bazel-rustfmt:
+    bazel build --config=rustfmt --config=unsafe-fast-presubmit //...:all -- -third_party/...
+
+xtask job:
+    ./scripts/xtask {{job}}
+
+clippy-ci: (xtask "run-cargo-clippy") bazel-clippy
+check-format-ci: (xtask "check-format") bazel-rustfmt
 
 # Temporary target to help debugging Bazel remote cache with more detailed logs.
 # It should be deleted when debugging is completed.

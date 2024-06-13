@@ -27,6 +27,7 @@ use std::{
     io::ErrorKind,
     path::Path,
     str::FromStr,
+    time::Instant,
 };
 
 use anyhow::Context;
@@ -40,12 +41,13 @@ use nix::{
 use oak_proto_rust::oak::attestation::v1::DiceData;
 use prost::Message;
 use tokio::process::Command;
+use tonic::transport::Uri;
 use x86_64::PhysAddr;
 
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(long, default_value = "http://10.0.2.100:8080")]
-    launcher_addr: String,
+    launcher_addr: Uri,
 
     #[arg(long, default_value = "/sbin/init")]
     init: String,
@@ -90,11 +92,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     chroot(".").context("failed to chroot to .")?;
     chdir("/").context("failed to chdir to /")?;
 
-    let mut client = LauncherClient::new(args.launcher_addr.parse()?)
+    let mut client = LauncherClient::new(args.launcher_addr)
         .await
         .context("error creating the launcher client")?;
 
-    let buf = client.get_oak_system_image().await.context("error fetching system image")?;
+    let buf = {
+        let now = Instant::now();
+        let buf = client.get_oak_system_image().await.context("error fetching system image")?;
+        eprintln!("stage1: system image loaded in {} s", now.elapsed().as_secs_f64());
+        buf
+    };
 
     let system_image_claims = dice::measure_system_image(&buf);
 

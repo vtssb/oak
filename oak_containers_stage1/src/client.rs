@@ -25,7 +25,9 @@ mod proto {
 
 use anyhow::{Context, Result};
 use proto::oak::containers::launcher_client::LauncherClient as GrpcLauncherClient;
+use tokio_vsock::{VsockAddr, VsockStream};
 use tonic::transport::{Channel, Uri};
+use tower::service_fn;
 
 pub struct LauncherClient {
     inner: GrpcLauncherClient<Channel>,
@@ -33,7 +35,27 @@ pub struct LauncherClient {
 
 impl LauncherClient {
     pub async fn new(addr: Uri) -> Result<Self> {
-        let inner = GrpcLauncherClient::<Channel>::connect(addr).await?;
+        // vsock is unfortunately going to require special handling.
+        let inner = if addr.scheme_str() == Some("vsock") {
+            let vsock_addr = VsockAddr::new(
+                addr.host()
+                    .unwrap_or(format!("{}", tokio_vsock::VMADDR_CID_HOST).as_str())
+                    .parse()
+                    .context("invalid vsock CID")?,
+                addr.port_u16().context("invalid vsock port")?.into(),
+            );
+            // The C++ gRPC implementations are more particular about the URI scheme; in
+            // particular, they may get confused by the "vsock" scheme. Therfore, create a
+            // fake URI with the "http" scheme to placate the libraries; the actual
+            // connection is made in `connect_with_connector` and that uses the correct URI.
+            GrpcLauncherClient::new(
+                Channel::builder(Uri::from_static("http://0:0"))
+                    .connect_with_connector(service_fn(move |_| VsockStream::connect(vsock_addr)))
+                    .await?,
+            )
+        } else {
+            GrpcLauncherClient::<Channel>::connect(addr).await?
+        };
         Ok(Self { inner })
     }
 

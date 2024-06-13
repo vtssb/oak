@@ -40,6 +40,10 @@ RUN systemctl enable oak-syslogd
 COPY ./target/kv-server /usr/bin/kv-server
 RUN systemctl enable kv-server
 
+# Metrics agent
+COPY ./target/oak_containers_agent_patched /usr/bin/oak_containers_agent
+RUN systemctl enable oak-agent
+
 # Only enable interactive logins if the kernel was booted with "debug" flag.
 RUN systemctl disable getty@
 RUN systemctl enable root-passwd

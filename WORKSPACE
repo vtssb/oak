@@ -81,11 +81,10 @@ grpc_extra_deps()
 # https://github.com/grpc/grpc-java
 http_archive(
     name = "io_grpc_grpc_java",
-    sha256 = "4af5ecbaed16455fcda9fdab36e131696f5092858dd130f026069fcf11817a21",
-    strip_prefix = "grpc-java-1.56.0",
+    sha256 = "4a37fbdf88c8344e14a12bb261aa3eb1401fa47cfc312fb82260592aa993171a",
+    strip_prefix = "grpc-java-1.62.0",
     urls = [
-        # Java gRPC v1.56.0 (2023-06-21).
-        "https://github.com/grpc/grpc-java/archive/refs/tags/v1.56.0.tar.gz",
+        "https://github.com/grpc/grpc-java/archive/refs/tags/v1.62.0.tar.gz",
     ],
 )
 
@@ -263,6 +262,12 @@ oci_pull(
     image = "europe-west2-docker.pkg.dev/oak-ci/oak-containers-sysimage-base/oak-containers-sysimage-base",
 )
 
+oci_pull(
+    name = "oak_containers_nvidia_sysimage_base",
+    digest = "sha256:9c5c0385c9c9902aa21ef4206729dfebb7b4d1b17ae1fc849de14d80d7c20482",
+    image = "europe-west2-docker.pkg.dev/oak-ci/oak-containers-sysimage-base/oak-containers-nvidia-sysimage-base",
+)
+
 load("@aspect_bazel_lib//lib:repositories.bzl", "register_expand_template_toolchains")
 
 register_expand_template_toolchains()
@@ -331,11 +336,21 @@ rust_register_toolchains(
     versions = _RUST_VERSIONS,
 )
 
+_BARE_METAL_RUSTC_FLAGS = [
+    "-C",
+    "relocation-model=static",
+    "-C",
+    "target-feature=+sse,+sse2,+ssse3,+sse4.1,+sse4.2,+avx,+avx2,+rdrand,-soft-float",
+]
+
 # Creates remote repositories for Rust toolchains, required for cross-compiling.
 rust_repository_set(
     name = "rust_toolchain_repo",
     edition = "2021",
     exec_triple = "x86_64-unknown-linux-gnu",
+    extra_rustc_flags = {
+        "x86_64-unknown-none": _BARE_METAL_RUSTC_FLAGS,
+    },
     extra_target_triples = {
         "x86_64-unknown-none": [
             "@platforms//cpu:x86_64",
@@ -345,374 +360,13 @@ rust_repository_set(
     versions = _RUST_VERSIONS,
 )
 
-load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
+load("//bazel/crates:repositories.bzl", "create_oak_crate_repositories")
 
-crate_universe_dependencies(bootstrap = True)
+create_oak_crate_repositories()
 
-load("@rules_rust//crate_universe:defs.bzl", "crate", "crates_repository")
+load("//bazel/crates:crates.bzl", "load_oak_crate_repositories")
 
-# Build jemalloc with bazel, so that we can provide it to the tikv-jemallocator build script.
-git_repository(
-    name = "jemalloc",
-    build_file = "//bazel:jemalloc.BUILD",
-    # jemalloc pointer for tikv-jemalloc-sys submodule pointer at 0.5.3
-    commit = "e13ca993e8ccb9ba9847cc330696e02839f328f7",
-
-    # Fix an issue when building jemalloc with gcc 10.3 (which is the version we
-    # currently use due to the aspect_gcc target)
-    # There's a target in the Makefile that uses the -MM flag, and
-    # when it does that, it doesn't include the $(CFLAGS).
-    # This results in __GNUC_PREREQ not being defined, which causes compiler
-    # failures.
-    # As a workaround, we patch that line in the Makefile.in to include the CFLAGS.
-    # TODO: b/341166977 Remove this when we can.
-    patch_cmds = ["sed -i '481s/-MM/$(CFLAGS) -MM/' Makefile.in"],
-    remote = "https://github.com/tikv/jemalloc",
-)
-
-# Default crate repository - some crates may require std.
-crates_repository(
-    name = "oak_crates_index",
-    annotations = {
-        # Provide the jemalloc library built by the library included above.
-        # The tikv-jemalloc-sys crate using by tikv-jemallocator uses a build script to run
-        # configure/make for libjemalloc. This doesn't work out of the box. The suggestion is to
-        # instead build libjemalloc with bazel, and then provide the generated lbirary to the
-        # build script.
-        #
-        # See: https://github.com/bazelbuild/rules_rust/issues/1670
-        # The example there didn't work exactly as written in this context, but I was able
-        # to modify it to get it working.
-        "tikv-jemalloc-sys": [crate.annotation(
-            build_script_data = [
-                "@jemalloc//:gen_dir",
-            ],
-            build_script_env = {
-                "JEMALLOC_OVERRIDE": "$(execpath @jemalloc//:gen_dir)/lib/libjemalloc.a",
-            },
-            data = ["@jemalloc//:gen_dir"],
-            version = "*",
-            deps = ["@jemalloc"],
-        )],
-    },
-    cargo_lockfile = "//:Cargo.bazel.lock",  # In Cargo-free mode this is used as output, not input.
-    lockfile = "//:cargo-bazel-lock.json",  # Shares most contents with cargo_lockfile.
-    packages = {
-        "acpi": crate.spec(version = "*"),
-        "aead": crate.spec(version = "*"),
-        "aes-gcm": crate.spec(
-            default_features = False,
-            features = [
-                "aes",
-                "alloc",
-            ],
-            version = "*",
-        ),
-        "aml": crate.spec(version = "*"),
-        "anyhow": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "async-stream": crate.spec(
-            version = "*",
-        ),
-        "arrayvec": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "assertables": crate.spec(version = "*"),
-        "async-trait": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "atomic_refcell": crate.spec(version = "*"),
-        "base64": crate.spec(
-            default_features = False,
-            features = ["alloc"],
-            version = "0.21",
-        ),
-        "bitflags": crate.spec(version = "*"),
-        "bitvec": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "bytes": crate.spec(version = "*"),
-        "ciborium": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "clap": crate.spec(
-            features = ["derive"],
-            version = "*",
-        ),
-        "coset": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        # Pin to 4.1.1 see issue #4952
-        # TODO: #4952 - Remove this pinning.
-        "curve25519-dalek": crate.spec(
-            default_features = False,
-            version = "=4.1.1",
-        ),
-        "ecdsa": crate.spec(
-            default_features = False,
-            features = [
-                "der",
-                "pem",
-                "pkcs8",
-                "signing",
-            ],
-            version = "*",
-        ),
-        "getrandom": crate.spec(
-            version = "*",
-        ),
-        "goblin": crate.spec(
-            default_features = False,
-            features = [
-                "elf32",
-                "elf64",
-                "endian_fd",
-            ],
-            version = "*",
-        ),
-        "hex": crate.spec(
-            default_features = False,
-            features = ["alloc"],
-            version = "*",
-        ),
-        "hkdf": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "hpke": crate.spec(
-            default_features = False,
-            features = [
-                "alloc",
-                "x25519",
-            ],
-            version = "*",
-        ),
-        "libm": crate.spec(version = "*"),
-        "linked_list_allocator": crate.spec(
-            features = [
-                "alloc_ref",
-            ],
-            version = "*",
-        ),
-        "lock_api": crate.spec(
-            features = ["arc_lock"],
-        ),
-        "log": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "nix": crate.spec(
-            features = ["user"],
-            version = "*",
-        ),
-        "oci-spec": crate.spec(
-            version = "*",
-        ),
-        "opentelemetry": crate.spec(
-            version = "*",
-        ),
-        "opentelemetry-otlp": crate.spec(
-            features = ["metrics"],
-            version = "*",
-        ),
-        "opentelemetry_sdk": crate.spec(
-            features = [
-                "metrics",
-                "rt-tokio",
-            ],
-            version = "*",
-        ),
-        "p256": crate.spec(
-            default_features = False,
-            features = [
-                "alloc",
-                "ecdsa-core",
-                "ecdsa",
-                "pem",
-            ],
-            version = "*",
-        ),
-        "p384": crate.spec(
-            default_features = False,
-            features = [
-                "ecdsa",
-                "pem",
-            ],
-            version = "0.13.0",
-        ),
-        "pkcs8": crate.spec(
-            default_features = False,
-            features = ["alloc"],
-            version = "*",
-        ),
-        "primeorder": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "procfs": crate.spec(
-            version = "*",
-        ),
-        "prost": crate.spec(
-            default_features = False,
-            features = ["prost-derive"],
-            version = "*",
-        ),
-        "prost-build": crate.spec(
-            version = "*",
-        ),
-        "prost-types": crate.spec(
-            version = "*",
-        ),
-        "rand_core": crate.spec(
-            default_features = False,
-            features = ["getrandom"],
-            version = "*",
-        ),
-        "regex": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "rsa": crate.spec(
-            default_features = False,
-            version = "0.9.6",
-        ),
-        "self_cell": crate.spec(version = "*"),
-        "serde": crate.spec(
-            default_features = False,
-            features = ["derive"],
-            version = "*",
-        ),
-        "serde_json": crate.spec(
-            default_features = False,
-            features = ["alloc"],
-            version = "*",
-        ),
-        "sha2": crate.spec(
-            default_features = False,
-            version = "*",
-        ),
-        "snafu": crate.spec(version = "*"),
-        "spinning_top": crate.spec(version = "*"),
-        "static_assertions": crate.spec(version = "*"),
-        "strum": crate.spec(
-            default_features = False,
-            features = ["derive"],
-            version = "*",
-        ),
-        "syslog": crate.spec(
-            version = "*",
-        ),
-        "tar": crate.spec(
-            version = "*",
-        ),
-        "tikv-jemallocator": crate.spec(version = "*"),
-        "time": crate.spec(
-            default_features = False,
-            features = [
-                "serde",
-                "parsing",
-            ],
-            version = "0.3.28",
-        ),
-        "tokio": crate.spec(
-            features = [
-                "rt-multi-thread",
-                "macros",
-                "sync",
-                "fs",
-                "process",
-                "net",
-            ],
-            version = "*",
-        ),
-        "tokio-stream": crate.spec(
-            features = ["net"],
-            version = "*",
-        ),
-        "tokio-util": crate.spec(version = "*"),
-        "tonic": crate.spec(version = "*"),
-        "tonic-build": crate.spec(version = "*"),
-        "uart_16550": crate.spec(version = "*"),
-        "virtio-drivers": crate.spec(version = "*"),
-        "walkdir": crate.spec(version = "*"),
-        "x509-cert": crate.spec(
-            default_features = False,
-            features = ["pem"],
-            version = "0.2.5",
-        ),
-        "x86_64": crate.spec(version = "0.14"),
-        "zerocopy": crate.spec(
-            default_features = False,
-            features = ["derive"],
-            version = "*",
-        ),
-        "zeroize": crate.spec(
-            features = ["derive"],
-            version = "*",
-        ),
-    },
-    rust_version = _RUST_NIGHTLY_VERSION,
-    # We request bare metal support. Because of feature unification, some creates
-    # in this repository may end up requiring std, thus not being compatible
-    # for x86_64-unknown-none. When that happens, we move the dependency to the
-    # oak_no_std_crates_index repository.
-    supported_platform_triples = [
-        "x86_64-unknown-linux-gnu",
-        "x86_64-unknown-none",
-    ],
-)
-
-load("@oak_crates_index//:defs.bzl", "crate_repositories")
-
-crate_repositories()
-
-# All creates in this repository must support no_std.
-crates_repository(
-    name = "oak_no_std_crates_index",
-    cargo_lockfile = "//:Cargo_no_std.bazel.lock",  # In Cargo-free mode this is used as output, not input.
-    lockfile = "//:cargo-no-std-bazel-lock.json",  # Shares most contents with cargo_lockfile.
-    packages = {
-        "anyhow": crate.spec(
-            default_features = False,
-            features = [],
-            version = "*",
-        ),
-        "bytes": crate.spec(
-            default_features = False,  # bytes crate has "std" in its default feature set.
-            version = "*",
-        ),
-        "bitflags": crate.spec(
-            package = "bitflags",
-            version = "*",
-        ),
-        "getrandom": crate.spec(
-            default_features = False,
-            # rdrand is required to support x64_64-unknown-none.
-            features = ["rdrand"],
-            version = "0.2.12",
-        ),
-        "log": crate.spec(
-            features = [],
-            version = "*",
-        ),
-        "x86_64": crate.spec(version = "*"),
-    },
-    supported_platform_triples = [
-        "x86_64-unknown-linux-gnu",  # Needed for bazel buid //...:all (builds for Linux).
-        "x86_64-unknown-none",
-    ],
-)
-
-load("@oak_no_std_crates_index//:defs.bzl", no_std_crate_repositories = "crate_repositories")
-
-no_std_crate_repositories()
+load_oak_crate_repositories()
 
 load("//bazel/tools/prost:deps.bzl", "prost_toolchain_crates")
 
@@ -721,3 +375,17 @@ prost_toolchain_crates()
 load("//bazel/tools/prost:defs.bzl", "setup_prost_toolchain")
 
 setup_prost_toolchain()
+
+# IDE support via rust-analyzer for bazel-only projects.
+# https://bazelbuild.github.io/rules_rust/rust_analyzer.html
+#
+# You can re-generate the rust-project.json file using:
+# bazel run @rules_rust//tools/rust_analyzer:gen_rust_project
+#
+# It should not be committed.
+#
+# VSCode users: There's a task included in .vscode/tasks.json that should
+# automatically do this for you when needed.
+load("@rules_rust//tools/rust_analyzer:deps.bzl", "rust_analyzer_dependencies")
+
+rust_analyzer_dependencies()

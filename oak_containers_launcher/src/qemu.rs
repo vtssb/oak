@@ -23,10 +23,22 @@ use std::{
 };
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use command_fds::CommandFdExt;
+use tokio_vsock::VMADDR_CID_HOST;
 
 use crate::path_exists;
+
+/// Types of confidential VMs
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+pub enum VmType {
+    #[default]
+    Default,
+    Sev,
+    SevEs,
+    SevSnp,
+    Tdx,
+}
 
 /// Represents parameters used for launching VM instances.
 #[derive(Parser, Clone, Debug, PartialEq)]
@@ -65,7 +77,8 @@ pub struct Params {
     #[arg(long, value_name = "PORT")]
     pub telnet_console: Option<u16>,
 
-    /// Optional virtio guest CID for virtio-vsock.
+    /// Optional virtio guest CID for virtio-vsock. If not assigned, defaults to
+    /// the current thread ID.
     /// Warning: This CID needs to be globally unique on the whole host!
     #[arg(long)]
     pub virtio_guest_cid: Option<u32>,
@@ -74,6 +87,11 @@ pub struct Params {
     /// VFIO.
     #[arg(long, value_name = "ADDRESS")]
     pub pci_passthrough: Option<String>,
+
+    /// Type of the confidential VM. It could be Default, Sev, SevEs,
+    /// SevSnp, or Tdx (TDX is unimplemented yet)
+    #[arg(long, required = false, value_enum, default_value_t = VmType::Default)]
+    pub vm_type: VmType,
 }
 
 impl Params {
@@ -94,6 +112,7 @@ impl Params {
             telnet_console: None,
             virtio_guest_cid: None,
             pci_passthrough: None,
+            vm_type: VmType::Default,
         }
     }
 }
@@ -129,7 +148,7 @@ impl Qemu {
         // for remote attestation.
         cmd.args(["-cpu", "host"]);
         // Set memory size if given.
-        if let Some(memory_size) = params.memory_size {
+        if let Some(ref memory_size) = params.memory_size {
             cmd.args(["-m", &memory_size]);
         };
         // Number of CPUs to give to the VM.
@@ -141,7 +160,52 @@ impl Qemu {
         // restart should be treated as a failure)
         cmd.arg("-no-reboot");
         // Use the `microvm` machine as the basis, and ensure ACPI and PCIe are enabled.
-        cmd.args(["-machine", "microvm,acpi=on,pcie=on"]);
+        let microvm_common = "microvm,acpi=on,pcie=on".to_string();
+        // SEV, SEV-ES, SEV-SNP VMs need confidential guest support and private memory.
+        let sev_machine_suffix = ",confidential-guest-support=sev0,memory-backend=ram1";
+        // Definition of the private memory.
+        let sev_common_object = format!(
+            "memory-backend-memfd,id=ram1,size={},share=true,reserve=false",
+            params.memory_size.unwrap_or("8G".to_string())
+        );
+        // SEV's feature configuration.
+        let sev_config_object = "id=sev0,cbitpos=51,reduced-phys-bits=1";
+        // Generate the parameters and add them to cmd.args.
+        let (machine_arg, object_args) = match params.vm_type {
+            VmType::Default => (microvm_common, vec![]),
+            VmType::Sev => (
+                microvm_common + sev_machine_suffix,
+                vec![
+                    sev_common_object,
+                    "sev-guest,".to_string() + sev_config_object + ",policy=0x1",
+                ],
+            ),
+            VmType::SevEs => (
+                microvm_common + sev_machine_suffix,
+                vec![
+                    sev_common_object,
+                    "sev-guest,".to_string() + sev_config_object + ",policy=0x5",
+                ],
+            ),
+            VmType::SevSnp => (
+                microvm_common + sev_machine_suffix,
+                vec![
+                    sev_common_object,
+                    // Reference:
+                    // https://lore.kernel.org/kvm/20240502231140.GC13783@ls.amr.corp.intel.com/T/
+                    // A basic command-line invocation for SNP would be
+                    // ...
+                    // -object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,id-auth=
+                    // ...
+                    "sev-snp-guest,".to_string() + sev_config_object + ",id-auth=",
+                ],
+            ),
+            VmType::Tdx => unimplemented!("TDX is not supported"),
+        };
+        cmd.args(["-machine", &machine_arg]);
+        for obj_arg in object_args {
+            cmd.args(["-object", &obj_arg]);
+        }
         // Route first serial port to console.
         if let Some(port) = params.telnet_console {
             cmd.args(["-serial", format!("telnet:localhost:{port},server").as_str()]);
@@ -173,13 +237,21 @@ impl Qemu {
             "hostfwd=tcp:{host_address}:50051-{vm_address}:50051"
         ));
         cmd.args(["-netdev", netdev_rules.join(",").as_str()]);
-        cmd.args(["-device", "virtio-net,netdev=netdev,rombar=0"]);
-        if let Some(virtio_guest_cid) = params.virtio_guest_cid {
-            cmd.args([
-                "-device",
-                &format!("vhost-vsock-pci,guest-cid={virtio_guest_cid},rombar=0"),
-            ]);
-        }
+        cmd.args([
+            "-device",
+            "virtio-net-pci,disable-legacy=on,iommu_platform=true,netdev=netdev,romfile=",
+        ]);
+        // The CID needs to be globally unique, so we default to the current thread ID
+        // (which should be unique on the system). This may have interesting
+        // interactions with async code though: if you start two VMMs in the same
+        // thread, it won't work. But we don't really have any other good sources of
+        // globally unique identifiers available for us, and starting multiple VMMs in
+        // one thread should be uncommon.
+        let virtio_guest_cid = params
+            .virtio_guest_cid
+            .unwrap_or_else(|| nix::unistd::gettid().as_raw().unsigned_abs());
+        cmd.args(["-device", &format!("vhost-vsock-pci,guest-cid={virtio_guest_cid},rombar=0")]);
+
         if let Some(pci_passthrough) = params.pci_passthrough {
             cmd.args(["-device", format!("vfio-pci,host={pci_passthrough}").as_str()]);
         }
@@ -189,21 +261,21 @@ impl Qemu {
         cmd.args(["-kernel", params.kernel.into_os_string().into_string().unwrap().as_str()]);
         cmd.args(["-initrd", params.initrd.into_os_string().into_string().unwrap().as_str()]);
         let ramdrive_size = params.ramdrive_size;
-        cmd.args([
-            "-append",
-            [
-                params.telnet_console.map_or_else(|| "", |_| "debug"),
-                "console=ttyS0",
-                "panic=-1",
-                "brd.rd_nr=1",
-                format!("brd.rd_size={ramdrive_size}").as_str(),
-                "brd.max_part=1",
-                format!("ip={vm_address}:::255.255.255.0::eth0:off").as_str(),
-                "quiet",
-            ]
-            .join(" ")
-            .as_str(),
-        ]);
+
+        let cmdline = vec![
+            params.telnet_console.map_or_else(|| "", |_| "debug").to_string(),
+            "console=ttyS0".to_string(),
+            "panic=-1".to_string(),
+            "brd.rd_nr=1".to_string(),
+            format!("brd.rd_size={ramdrive_size}"),
+            "brd.max_part=1".to_string(),
+            format!("ip={vm_address}:::255.255.255.0::eth0:off"),
+            "quiet".to_string(),
+            "--".to_string(),
+            format!("--launcher-addr=vsock://{VMADDR_CID_HOST}:{launcher_service_port}"),
+        ];
+
+        cmd.args(["-append", cmdline.join(" ").as_str()]);
 
         log::debug!("QEMU command line: {:?}", cmd);
 

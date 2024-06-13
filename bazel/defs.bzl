@@ -18,3 +18,10 @@
 load("//bazel/private:oci_runtime_bundle.bzl", _oci_runtime_bundle = "oci_runtime_bundle")
 
 oci_runtime_bundle = _oci_runtime_bundle
+
+RUST_NIGHTLY_VERSION = "nightly/2024-02-01"
+
+RUST_VERSIONS = [
+    "1.76.0",
+    RUST_NIGHTLY_VERSION,
+]
