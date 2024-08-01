@@ -21,7 +21,6 @@ cargo build --package=oak_containers_syslogd --release -Z unstable-options --out
 # confuse cargo. Therefore we copy the binary to a new location and patch that.
 cp ./target/oak_containers_syslogd "$IMAGE_BINARIES_DIRECTORY"
 cp ./target/oak_containers_orchestrator "$IMAGE_BINARIES_DIRECTORY"
-cp ./target/kv-server "$IMAGE_BINARIES_DIRECTORY"
 
 # When built under nix the interpreter points to some Nix-specific location that doesn't exist on a regular Linux host, therefore
 # we need to manually patch the binary to set it back to the normal regular location.

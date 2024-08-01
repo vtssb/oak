@@ -37,9 +37,6 @@ RUN systemctl enable oak-orchestrator
 COPY ./target/oak_containers_syslogd_patched /usr/bin/oak_containers_syslogd
 RUN systemctl enable oak-syslogd
 
-COPY ./target/kv-server /usr/bin/kv-server
-RUN systemctl enable kv-server
-
 # Metrics agent
 COPY ./target/oak_containers_agent_patched /usr/bin/oak_containers_agent
 RUN systemctl enable oak-agent
@@ -50,8 +47,6 @@ RUN systemctl enable root-passwd
 
 # Don't bother starting the graphical interface, let's stick with the basic multi-user target.
 RUN systemctl set-default multi-user
-
-RUN echo kvserver.local > /etc/hostname
 
 RUN mkdir /deltas
 RUN mkdir /realtime
